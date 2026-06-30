@@ -43,4 +43,17 @@ pub enum Commands {
 
     /// Uninstall launchd plist
     Uninstall,
+
+    /// Install shell hook (zsh or fish) to report terminal commands
+    Hook {
+        /// Shell to configure (zsh, fish). Defaults to $SHELL.
+        #[arg(long)]
+        shell: Option<String>,
+    },
+
+    /// Print shell hook script to stdout
+    HookPrint {
+        /// Shell type: zsh or fish
+        shell: String,
+    },
 }

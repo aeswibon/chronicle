@@ -1,6 +1,11 @@
 mod cli;
 mod collectors;
 mod daemon;
+mod event_filter;
+mod hook_install;
+mod project;
+mod project_bootstrap;
+mod singleton;
 mod span_processor;
 
 use clap::Parser;
@@ -29,6 +34,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Status { socket } => check_status(&socket).await,
         Commands::Install => install_launchd().await,
         Commands::Uninstall => uninstall_launchd().await,
+        Commands::Hook { shell } => hook_install::install(shell.as_deref()),
+        Commands::HookPrint { shell } => hook_install::print_hook(&shell),
     }
 }
 

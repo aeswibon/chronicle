@@ -1,5 +1,6 @@
 use chronicle_core::{CanonicalEvent, EventCategory};
 use notify::{RecursiveMode, Watcher};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use tokio::sync::mpsc as tokio_mpsc;
@@ -56,6 +57,8 @@ impl GitCollector {
 
         let tx_clone = tx;
         tokio::task::spawn_blocking(move || {
+            let mut last_seen: HashMap<String, String> = HashMap::new();
+
             while let Ok(res) = std_rx.recv() {
                 let event = match res {
                     Ok(e) => e,
@@ -66,6 +69,16 @@ impl GitCollector {
                 };
 
                 for path in &event.paths {
+                    let key = path.to_string_lossy().to_string();
+                    let fingerprint = file_fingerprint(path);
+                    if fingerprint.is_empty() {
+                        continue;
+                    }
+                    if last_seen.get(&key).map(String::as_str) == Some(fingerprint.as_str()) {
+                        continue;
+                    }
+                    last_seen.insert(key, fingerprint);
+
                     if let Some(ev) = parse_reflog_change(path) {
                         debug!(
                             "git event: {} in {}",
@@ -83,6 +96,10 @@ impl GitCollector {
     }
 }
 
+fn file_fingerprint(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap_or_default()
+}
+
 fn parse_reflog_change(path: &Path) -> Option<CanonicalEvent> {
     let file_name = path.file_name()?.to_str()?;
 
@@ -90,14 +107,12 @@ fn parse_reflog_change(path: &Path) -> Option<CanonicalEvent> {
         let content = std::fs::read_to_string(path).ok()?;
         let branch = content.trim().strip_prefix("ref: refs/heads/")?;
         let project = detect_project_from_path(path)?;
-        let mut event = CanonicalEvent::new(
-            "chronicle-daemon",
-            EventCategory::Git,
-            "branch.checkout",
-        )
-        .with_project(&project);
+        let project_path = project_path_for_git(path)?;
+        let mut event = CanonicalEvent::new("git", EventCategory::Git, "branch.checkout")
+            .with_project(&project);
         let meta = event.metadata.as_object_mut().unwrap();
         meta.insert("branch".into(), branch.into());
+        meta.insert("project_path".into(), project_path.into());
         return Some(event);
     }
 
@@ -120,14 +135,25 @@ fn parse_reflog_change(path: &Path) -> Option<CanonicalEvent> {
     } else if message.contains("checkout") {
         "branch.checkout"
     } else {
-        "git.other"
+        return None;
     };
 
-    let mut event = CanonicalEvent::new("chronicle-daemon", EventCategory::Git, git_type)
-        .with_project(&project);
+    let mut event = CanonicalEvent::new("git", EventCategory::Git, git_type).with_project(&project);
     let meta = event.metadata.as_object_mut().unwrap();
     meta.insert("reflog".into(), message.into());
+    if let Some(root) = project_path_for_git(path) {
+        meta.insert("project_path".into(), root.into());
+    }
     Some(event)
+}
+
+fn project_path_for_git(path: &Path) -> Option<String> {
+    for ancestor in path.ancestors() {
+        if ancestor.join(".git").exists() {
+            return Some(ancestor.to_string_lossy().to_string());
+        }
+    }
+    None
 }
 
 fn detect_project_from_path(path: &Path) -> Option<String> {

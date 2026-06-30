@@ -3,6 +3,9 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
+use crate::event_filter;
+use crate::project;
+
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 pub struct WindowFocusCollector;
@@ -14,33 +17,49 @@ impl WindowFocusCollector {
 
         loop {
             tokio::time::sleep(POLL_INTERVAL).await;
-            match get_frontmost_app().await {
-                Ok(info) => {
-                    let app_key = format!("{}|{}", info.name, info.bundle_id);
-                    if last_app.as_ref() != Some(&app_key) {
-                        let mut event = CanonicalEvent::new(
-                            "chronicle-daemon",
-                            EventCategory::Os,
-                            "process.focus",
-                        )
-                        .with_project(&info.project_name());
-
-                        let meta = event.metadata.as_object_mut().unwrap();
-                        meta.insert("app_name".into(), info.name.clone().into());
-                        meta.insert("bundle_id".into(), info.bundle_id.clone().into());
-                        if let Some(title) = info.window_title {
-                            meta.insert("window_title".into(), title.into());
-                        }
-
-                        if tx.send(event).await.is_err() {
-                            warn!("window_focus: receiver dropped");
-                            return;
-                        }
-                        last_app = Some(app_key);
-                    }
+            let info = match tokio::task::spawn_blocking(get_frontmost_app_sync).await {
+                Ok(Ok(info)) => info,
+                Ok(Err(e)) => {
+                    debug!("window_focus: {e}");
+                    continue;
                 }
-                Err(e) => debug!("window_focus: {e}"),
+                Err(e) => {
+                    debug!("window_focus join: {e}");
+                    continue;
+                }
+            };
+
+            let app_key = info.name.to_lowercase();
+            if last_app.as_ref() == Some(&app_key) {
+                continue;
             }
+
+            let mut event = CanonicalEvent::new(&info.name, EventCategory::Os, "process.focus");
+
+            if let Some(title) = info.window_title.as_deref() {
+                if let Some((project, root)) = project::detect_project_from_title(title) {
+                    event = event.with_project(&project);
+                    let meta = event.metadata.as_object_mut().unwrap();
+                    meta.insert("project_path".into(), root.to_string_lossy().into());
+                }
+            }
+
+            let meta = event.metadata.as_object_mut().unwrap();
+            meta.insert("app_name".into(), info.name.clone().into());
+            meta.insert("bundle_id".into(), info.bundle_id.clone().into());
+            if let Some(title) = info.window_title {
+                meta.insert("window_title".into(), title.into());
+            }
+
+            if !event_filter::should_record(&event) {
+                continue;
+            }
+
+            if tx.send(event).await.is_err() {
+                warn!("window_focus: receiver dropped");
+                return;
+            }
+            last_app = Some(app_key);
         }
     }
 }
@@ -51,17 +70,8 @@ struct AppInfo {
     window_title: Option<String>,
 }
 
-impl AppInfo {
-    fn project_name(&self) -> String {
-        self.name
-            .split('.')
-            .next()
-            .unwrap_or(&self.name)
-            .to_lowercase()
-    }
-}
-
-async fn get_frontmost_app() -> Result<AppInfo, String> {
+fn get_frontmost_app_sync() -> Result<AppInfo, String> {
+    // System Events only — never `tell application appName` (triggers Choose Application).
     let output = std::process::Command::new("osascript")
         .args([
             "-e",
@@ -69,7 +79,13 @@ async fn get_frontmost_app() -> Result<AppInfo, String> {
                 set frontApp to first application process whose frontmost is true
                 set appName to name of frontApp
                 set bundleId to bundle identifier of frontApp
-                return appName & "|||" & bundleId
+                set winTitle to ""
+                try
+                    if (count of windows of frontApp) > 0 then
+                        set winTitle to name of front window of frontApp
+                    end if
+                end try
+                return appName & "|||" & bundleId & "|||" & winTitle
             end tell"#,
         ])
         .output()
@@ -89,43 +105,18 @@ async fn get_frontmost_app() -> Result<AppInfo, String> {
     }
 
     let name = parts[0].trim().to_string();
-    let bundle_id = parts[1].trim().to_string();
-    let window_title = get_window_title().await;
+    let mut bundle_id = parts[1].trim().to_string();
+    if bundle_id == "missing value" {
+        bundle_id.clear();
+    }
+    let window_title = parts
+        .get(2)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     Ok(AppInfo {
         name,
         bundle_id,
         window_title,
     })
-}
-
-async fn get_window_title() -> Option<String> {
-    let output = std::process::Command::new("osascript")
-        .args([
-            "-e",
-            r#"tell application "System Events"
-                set frontApp to first application process whose frontmost is true
-                set appName to name of frontApp
-            end tell
-            tell application appName
-                if (count of windows) > 0 then
-                    return name of front window
-                else
-                    return ""
-                end if
-            end tell"#,
-        ])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let title = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if title.is_empty() {
-        None
-    } else {
-        Some(title)
-    }
 }

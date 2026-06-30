@@ -1,4 +1,6 @@
 use crate::collectors;
+use crate::event_filter;
+use crate::project;
 use crate::span_processor::SpanProcessor;
 use chronicle_core::CanonicalEvent;
 use chronicle_ipc::{DaemonRequest, DaemonResponse, Server};
@@ -35,8 +37,23 @@ impl Daemon {
             std::fs::create_dir_all(parent)?;
         }
 
+        let lock_path = store_path
+            .parent()
+            .unwrap_or_else(|| Path::new("/tmp"))
+            .join("daemon.lock");
+        let _lock = crate::singleton::DaemonLock::acquire(&lock_path)?;
+
         let store = Store::open(store_path).map_err(|e| anyhow::anyhow!("store: {e}"))?;
         let store = Arc::new(Mutex::new(store));
+
+        let watch_dirs: Vec<_> = self
+            .watch_dirs
+            .iter()
+            .map(|d| {
+                let expanded = shellexpand::tilde(d).to_string();
+                std::path::PathBuf::from(expanded)
+            })
+            .collect();
 
         let server = Server::bind(&self.socket_path)
             .map_err(|e| anyhow::anyhow!("bind: {e}"))?;
@@ -53,15 +70,6 @@ impl Daemon {
             process_events(event_rx, store_persist, counter, broadcast_tx_clone).await;
         });
 
-        let watch_dirs: Vec<_> = self
-            .watch_dirs
-            .iter()
-            .map(|d| {
-                let expanded = shellexpand::tilde(d).to_string();
-                std::path::PathBuf::from(expanded)
-            })
-            .collect();
-
         let collectors: Vec<collectors::Collector> = vec![
             collectors::Collector::WindowFocus(
                 collectors::window_focus::WindowFocusCollector,
@@ -76,7 +84,7 @@ impl Daemon {
                 ),
             ),
             collectors::Collector::Shell(collectors::shell::ShellHookCollector),
-            collectors::Collector::Git(collectors::git::GitCollector::new(watch_dirs)),
+            collectors::Collector::Git(collectors::git::GitCollector::new(watch_dirs.clone())),
         ];
 
         for collector in collectors {
@@ -85,6 +93,30 @@ impl Daemon {
                 collector.run(tx).await;
             });
         }
+
+        let store_bootstrap = store.clone();
+        let bootstrap_dirs = watch_dirs.clone();
+        tokio::spawn(async move {
+            let needs_scan = {
+                let guard = store_bootstrap.lock().await;
+                guard.count_projects().unwrap_or(0) == 0
+            };
+
+            if needs_scan {
+                let repos = tokio::task::spawn_blocking({
+                    let dirs = bootstrap_dirs.clone();
+                    move || crate::project_bootstrap::discover_repos(&dirs)
+                })
+                .await
+                .unwrap_or_default();
+
+                let guard = store_bootstrap.lock().await;
+                crate::project_bootstrap::apply_discovered_repos(&guard, &repos);
+            }
+
+            let guard = store_bootstrap.lock().await;
+            crate::project_bootstrap::bootstrap_projects_light(&guard);
+        });
 
         let mut sigint = signal(SignalKind::interrupt())?;
         let mut sigterm = signal(SignalKind::terminate())?;
@@ -145,8 +177,21 @@ async fn process_events(
     let mut span_processor = SpanProcessor::new();
 
     while let Some(event) = rx.recv().await {
-        if let Err(e) = store.lock().await.insert_event(&event) {
-            error!("persist event: {e}");
+        if !event_filter::should_record(&event) {
+            continue;
+        }
+
+        {
+            let guard = store.lock().await;
+            if let Err(e) = guard.insert_event(&event) {
+                error!("persist event: {e}");
+            } else if let Some(ref name) = event.project {
+                if let Some(path) = project::project_path_from_event(name, &event.metadata) {
+                    if let Err(e) = guard.upsert_project(name, &path, None) {
+                        error!("upsert project: {e}");
+                    }
+                }
+            }
         }
 
         if let Some(span) = span_processor.process(&event) {
@@ -204,22 +249,38 @@ async fn handle_connection(
                         }
                     }
                     DaemonRequest::GetTimeline { since, until, limit } => {
-                        match store.query_events(since, until, limit) {
-                            Ok(events) => {
-                                let spans = events
-                                    .into_iter()
-                                    .map(|e| {
-                                        chronicle_core::Span::new(
-                                            chronicle_core::SpanType::Idle,
-                                            e.project.clone(),
-                                        )
-                                    })
-                                    .collect();
-                                DaemonResponse::Timeline { spans }
-                            }
+                        match store.query_spans(since, until, limit) {
+                            Ok(spans) => DaemonResponse::Timeline { spans },
                             Err(e) => DaemonResponse::Error {
                                 code: 500,
                                 message: format!("query failed: {e}"),
+                            },
+                        }
+                    }
+                    DaemonRequest::GetEvents { since, until, limit } => {
+                        match store.query_activity_events(since, until, limit) {
+                            Ok(events) => DaemonResponse::TimelineEvents { events },
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("query failed: {e}"),
+                            },
+                        }
+                    }
+                    DaemonRequest::Search { query, mode: _, limit } => {
+                        match store.search_events(&query, limit) {
+                            Ok(events) => DaemonResponse::TimelineEvents { events },
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("search failed: {e}"),
+                            },
+                        }
+                    }
+                    DaemonRequest::ListProjects { limit } => {
+                        match store.query_projects(limit) {
+                            Ok(projects) => DaemonResponse::Projects { projects },
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("projects query failed: {e}"),
                             },
                         }
                     }
@@ -247,6 +308,12 @@ async fn handle_connection(
         },
         Err(e) => {
             warn!("read request: {e}");
+            let _ = conn
+                .send_response(DaemonResponse::Error {
+                    code: 400,
+                    message: format!("bad request: {e}"),
+                })
+                .await;
         }
     }
 }

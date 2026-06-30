@@ -1,4 +1,4 @@
-use chronicle_core::{CanonicalEvent, Span};
+use chronicle_core::{CanonicalEvent, ProjectRecord, Span};
 use rusqlite::{params, Connection, Result as SqlResult};
 use std::path::Path;
 
@@ -24,8 +24,10 @@ impl Store {
     }
 
     fn run_migrations(&mut self) -> SqlResult<()> {
-        let sql = include_str!("../migrations/001_initial.sql");
-        self.conn.execute_batch(sql)?;
+        self.conn
+            .execute_batch(include_str!("../migrations/001_initial.sql"))?;
+        self.conn
+            .execute_batch(include_str!("../migrations/002_fts_triggers.sql"))?;
         Ok(())
     }
 
@@ -69,6 +71,46 @@ impl Store {
         let mut stmt = self.conn.prepare_cached(
             "SELECT id, timestamp, source, category, type, project, workspace, duration_ms, metadata
              FROM events WHERE timestamp >= ?1 AND timestamp <= ?2
+             ORDER BY timestamp DESC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![since, until, limit], |row| {
+            let metadata_str: String = row.get(8)?;
+            Ok(CanonicalEvent {
+                id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                timestamp: row.get(1)?,
+                source: row.get(2)?,
+                category: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or(
+                    chronicle_core::EventCategory::Os,
+                ),
+                r#type: row.get(4)?,
+                project: row.get(5)?,
+                workspace: row.get(6)?,
+                duration_ms: row.get(7)?,
+                metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
+                version: "1.0".into(),
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// High-signal events for the live activity timeline (excludes noisy filesystem/git/shell).
+    pub fn query_activity_events(
+        &self,
+        since: i64,
+        until: Option<i64>,
+        limit: u32,
+    ) -> SqlResult<Vec<CanonicalEvent>> {
+        let until = until.unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, timestamp, source, category, type, project, workspace, duration_ms, metadata
+             FROM events WHERE timestamp >= ?1 AND timestamp <= ?2
+             AND (
+               category IN ('\"os\"', '\"shell\"', '\"git\"')
+               OR type IN ('file.created', 'file.deleted')
+             )
+             AND type NOT IN ('git.other', 'file.modified')
+             AND metadata NOT LIKE '%\"app_name\":\"chronicle-ui\"%'
+             AND metadata NOT LIKE '%\"app_name\":\"Chronicle\"%'
              ORDER BY timestamp DESC LIMIT ?3",
         )?;
         let rows = stmt.query_map(params![since, until, limit], |row| {
@@ -144,13 +186,17 @@ impl Store {
     }
 
     pub fn search_events(&self, query: &str, limit: u32) -> SqlResult<Vec<CanonicalEvent>> {
+        let fts_query = build_fts_query(query);
+        if fts_query.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut stmt = self.conn.prepare_cached(
             "SELECT e.id, e.timestamp, e.source, e.category, e.type, e.project, e.workspace, e.duration_ms, e.metadata
              FROM events e JOIN events_fts fts ON e.rowid = fts.rowid
              WHERE events_fts MATCH ?1
              ORDER BY rank LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![query, limit], |row| {
+        let rows = stmt.query_map(params![fts_query, limit], |row| {
             Ok(CanonicalEvent {
                 id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
                 timestamp: row.get(1)?,
@@ -164,6 +210,27 @@ impl Store {
                 duration_ms: row.get(7)?,
                 metadata: serde_json::from_str(&row.get::<_, String>(8)?).unwrap_or_default(),
                 version: "1.0".into(),
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn count_projects(&self) -> SqlResult<u64> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
+    }
+
+    pub fn query_projects(&self, limit: u32) -> SqlResult<Vec<ProjectRecord>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT name, path, last_active, language FROM projects
+             ORDER BY last_active DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok(ProjectRecord {
+                name: row.get(0)?,
+                path: row.get(1)?,
+                last_active: row.get(2)?,
+                language: row.get(3)?,
             })
         })?;
         rows.collect()
@@ -198,6 +265,40 @@ impl Store {
         stmt.execute(params![name, path, now, language])?;
         Ok(())
     }
+
+    pub fn prune_non_repo_projects(&self) -> SqlResult<usize> {
+        let mut stmt = self.conn.prepare("SELECT name, path FROM projects")?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<_, _>>()?;
+        drop(stmt);
+
+        let mut removed = 0usize;
+        for (name, path) in rows {
+            if !is_repo_path(std::path::Path::new(&path)) {
+                self.conn
+                    .execute("DELETE FROM projects WHERE name = ?1", params![name])?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+}
+
+fn is_repo_path(path: &std::path::Path) -> bool {
+    path.is_absolute()
+        && (path.join(".git").exists() || path.join("Cargo.toml").exists())
+}
+
+fn build_fts_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .filter(|t| !t.is_empty())
+        .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" AND ")
 }
 
 #[cfg(test)]
@@ -274,6 +375,25 @@ mod tests {
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].span_type, SpanType::Coding);
         assert!(spans[0].ended_at.is_some());
+    }
+
+    #[test]
+    fn test_prune_non_repo_projects() {
+        let store = Store::open_in_memory().unwrap();
+        store.upsert_project("ghostty", "ghostty", None).unwrap();
+        store
+            .upsert_project("chronicle", "/tmp/chronicle", None)
+            .unwrap();
+        std::fs::create_dir_all("/tmp/chronicle/.git").unwrap();
+
+        let removed = store.prune_non_repo_projects().unwrap();
+        assert_eq!(removed, 1);
+
+        let projects = store.query_projects(10).unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "chronicle");
+
+        let _ = std::fs::remove_dir_all("/tmp/chronicle");
     }
 
     #[test]

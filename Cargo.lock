@@ -161,6 +161,7 @@ dependencies = [
  "chrono",
  "clap",
  "dirs",
+ "libc",
  "notify",
  "serde",
  "serde_json",

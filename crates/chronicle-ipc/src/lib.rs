@@ -1,20 +1,22 @@
 pub mod client;
 pub mod server;
 
-pub use client::Client;
+pub use client::{Client, EventStream};
 pub use server::{Connection, Server};
 
 use chronicle_core::Span;
 use serde::{Deserialize, Serialize};
-pub use chronicle_core::CanonicalEvent;
+pub use chronicle_core::{CanonicalEvent, ProjectRecord};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DaemonRequest {
     Subscribe { event_types: Vec<String> },
     GetTimeline { since: i64, until: Option<i64>, limit: u32 },
+    GetEvents { since: i64, until: Option<i64>, limit: u32 },
     GetProjectContext { project: String },
-    Search { query: String, mode: SearchMode },
+    Search { query: String, mode: SearchMode, limit: u32 },
+    ListProjects { limit: u32 },
     GetErrors { since: i64, limit: u32 },
     GetSessions { since: i64, until: Option<i64> },
     GetStatus,
@@ -33,6 +35,8 @@ pub enum SearchMode {
 pub enum DaemonResponse {
     Event { event: CanonicalEvent },
     Timeline { spans: Vec<Span> },
+    TimelineEvents { events: Vec<CanonicalEvent> },
+    Projects { projects: Vec<ProjectRecord> },
     Status { uptime_secs: u64, events_count: u64, version: String },
     Ack { event_id: String },
     Error { code: u32, message: String },

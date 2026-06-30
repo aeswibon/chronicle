@@ -119,6 +119,14 @@ impl Span {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectRecord {
+    pub name: String,
+    pub path: String,
+    pub last_active: i64,
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: Uuid,
     pub session_type: SessionType,

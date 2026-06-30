@@ -1,3 +1,4 @@
+use crate::project;
 use chronicle_core::{CanonicalEvent, EventCategory};
 use serde::Deserialize;
 use std::time::Duration;
@@ -51,12 +52,28 @@ impl ShellHookCollector {
                                 "command.failed"
                             };
 
+                            let source = cmd
+                                .cmd
+                                .split_whitespace()
+                                .next()
+                                .unwrap_or("shell")
+                                .to_string();
+
+                            let project_name = project::project_name_from_cwd(&cmd.cwd)
+                                .unwrap_or_else(|| {
+                                    cmd.cwd
+                                        .rsplit('/')
+                                        .next()
+                                        .unwrap_or("unknown")
+                                        .to_string()
+                                });
+
                             let mut event = CanonicalEvent::new(
-                                "chronicle-daemon",
+                                &source,
                                 EventCategory::Shell,
                                 event_type,
                             )
-                            .with_project(&cmd.project())
+                            .with_project(&project_name)
                             .with_duration(cmd.dur);
 
                             let meta = event.metadata.as_object_mut().unwrap();
@@ -65,7 +82,10 @@ impl ShellHookCollector {
                                 "exit_code".into(),
                                 cmd.exit_code.to_string().into(),
                             );
-                            meta.insert("cwd".into(), cmd.cwd.into());
+                            meta.insert("cwd".into(), cmd.cwd.clone().into());
+                            if let Some((_, root)) = project::detect_project(std::path::Path::new(&cmd.cwd)) {
+                                meta.insert("project_path".into(), root.to_string_lossy().into());
+                            }
 
                             if tx.send(event).await.is_err() {
                                 warn!("shell: receiver dropped");
@@ -86,11 +106,3 @@ impl ShellHookCollector {
     }
 }
 
-impl ShellCommand {
-    fn project(&self) -> &str {
-        self.cwd
-            .rsplit('/')
-            .next()
-            .unwrap_or("unknown")
-    }
-}
