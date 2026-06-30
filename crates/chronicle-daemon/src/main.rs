@@ -1,6 +1,7 @@
 mod cli;
 mod collectors;
 mod daemon;
+mod span_processor;
 
 use clap::Parser;
 use cli::{Cli, Commands};

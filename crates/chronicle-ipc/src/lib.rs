@@ -2,7 +2,7 @@ pub mod client;
 pub mod server;
 
 pub use client::Client;
-pub use server::Server;
+pub use server::{Connection, Server};
 
 use chronicle_core::Span;
 use serde::{Deserialize, Serialize};

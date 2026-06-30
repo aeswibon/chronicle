@@ -1,4 +1,5 @@
 use crate::collectors;
+use crate::span_processor::SpanProcessor;
 use chronicle_core::CanonicalEvent;
 use chronicle_ipc::{DaemonRequest, DaemonResponse, Server};
 use chronicle_store::Store;
@@ -6,6 +7,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::broadcast;
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, info, warn};
 
@@ -40,17 +43,14 @@ impl Daemon {
         let started_at = Instant::now();
         let event_counter = Arc::new(AtomicU64::new(0));
 
-        let (event_tx, mut event_rx) = mpsc::channel::<CanonicalEvent>(1024);
+        let (event_tx, event_rx) = mpsc::channel::<CanonicalEvent>(1024);
+        let (broadcast_tx, _) = broadcast::channel::<CanonicalEvent>(256);
 
         let store_persist = store.clone();
         let counter = event_counter.clone();
+        let broadcast_tx_clone = broadcast_tx.clone();
         tokio::spawn(async move {
-            while let Some(event) = event_rx.recv().await {
-                if let Err(e) = store_persist.lock().await.insert_event(&event) {
-                    error!("persist event: {e}");
-                }
-                counter.fetch_add(1, Ordering::Relaxed);
-            }
+            process_events(event_rx, store_persist, counter, broadcast_tx_clone).await;
         });
 
         let watch_dirs: Vec<_> = self
@@ -86,83 +86,167 @@ impl Daemon {
             });
         }
 
+        let mut sigint = signal(SignalKind::interrupt())?;
+        let mut sigterm = signal(SignalKind::terminate())?;
+
         info!(
             "Chronicle daemon ready on {} (store: {})",
             self.socket_path, expanded_store
         );
 
         loop {
-            match server.accept().await {
-                Ok(mut conn) => {
-                    let store = store.clone();
-                    let counter = event_counter.clone();
-                    let started = started_at;
-                    tokio::spawn(async move {
-                        match conn.read_request().await {
-                            Ok(req) => {
-                                let store = store.lock().await;
-                                let resp = match req {
-                                    DaemonRequest::GetStatus => {
-                                        let count = store.count_events().unwrap_or(0);
-                                        DaemonResponse::Status {
-                                            uptime_secs: started.elapsed().as_secs(),
-                                            events_count: count,
-                                            version: env!("CARGO_PKG_VERSION").into(),
-                                        }
-                                    }
-                                    DaemonRequest::GetTimeline { since, until, limit } => {
-                                        match store.query_events(since, until, limit) {
-                                            Ok(events) => {
-                                                let spans = events
-                                                    .into_iter()
-                                                    .map(|e| {
-                                                        chronicle_core::Span::new(
-                                                            chronicle_core::SpanType::Idle,
-                                                            e.project.clone(),
-                                                        )
-                                                    })
-                                                    .collect();
-                                                DaemonResponse::Timeline { spans }
-                                            }
-                                            Err(e) => DaemonResponse::Error {
-                                                code: 500,
-                                                message: format!("query failed: {e}"),
-                                            },
-                                        }
-                                    }
-                                    DaemonRequest::EmitEvent { event } => {
-                                        let event_id = event.id.to_string();
-                                        if let Err(e) = store.insert_event(&event) {
-                                            DaemonResponse::Error {
-                                                code: 500,
-                                                message: format!("insert failed: {e}"),
-                                            }
-                                        } else {
-                                            counter.fetch_add(1, Ordering::Relaxed);
-                                            DaemonResponse::Ack { event_id }
-                                        }
-                                    }
-                                    _ => DaemonResponse::Error {
-                                        code: 400,
-                                        message: "unimplemented".into(),
-                                    },
-                                };
-                                drop(store);
-                                if let Err(e) = conn.send_response(resp).await {
-                                    warn!("send response: {e}");
-                                }
-                            }
-                            Err(e) => {
-                                warn!("read request: {e}");
-                            }
-                        }
-                    });
+            tokio::select! {
+                _ = sigint.recv() => {
+                    info!("received SIGINT, shutting down");
+                    break;
                 }
-                Err(e) => {
-                    error!("accept: {e}");
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                _ = sigterm.recv() => {
+                    info!("received SIGTERM, shutting down");
+                    break;
+                }
+                result = server.accept() => {
+                    match result {
+                        Ok(mut conn) => {
+                            let store = store.clone();
+                            let counter = event_counter.clone();
+                            let started = started_at;
+                            let broadcast_rx = broadcast_tx.subscribe();
+                            tokio::spawn(async move {
+                                handle_connection(
+                                    &mut conn,
+                                    &store,
+                                    &counter,
+                                    started,
+                                    broadcast_rx,
+                                )
+                                .await;
+                            });
+                        }
+                        Err(e) => {
+                            error!("accept error: {e}");
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        }
+                    }
                 }
             }
+        }
+
+        info!("Chronicle daemon stopped");
+        Ok(())
+    }
+}
+
+async fn process_events(
+    mut rx: mpsc::Receiver<CanonicalEvent>,
+    store: Arc<Mutex<Store>>,
+    counter: Arc<AtomicU64>,
+    broadcast_tx: broadcast::Sender<CanonicalEvent>,
+) {
+    let mut span_processor = SpanProcessor::new();
+
+    while let Some(event) = rx.recv().await {
+        if let Err(e) = store.lock().await.insert_event(&event) {
+            error!("persist event: {e}");
+        }
+
+        if let Some(span) = span_processor.process(&event) {
+            if let Err(e) = store.lock().await.insert_span(&span) {
+                error!("persist span: {e}");
+            }
+            info!(
+                "session closed: {:?} ({:.1}m, {} events)",
+                span.span_type,
+                span.duration_ms.unwrap_or(0) as f64 / 60000.0,
+                span.event_count
+            );
+        }
+
+        counter.fetch_add(1, Ordering::Relaxed);
+        let _ = broadcast_tx.send(event);
+    }
+}
+
+async fn handle_connection(
+    conn: &mut chronicle_ipc::Connection,
+    store: &Arc<Mutex<Store>>,
+    _counter: &Arc<AtomicU64>,
+    started: Instant,
+    mut broadcast_rx: broadcast::Receiver<CanonicalEvent>,
+) {
+    match conn.read_request().await {
+        Ok(req) => match req {
+            DaemonRequest::Subscribe { .. } => {
+                loop {
+                    match broadcast_rx.recv().await {
+                        Ok(event) => {
+                            if conn
+                                .send_response(DaemonResponse::Event { event })
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    }
+                }
+            }
+            _ => {
+                let store = store.lock().await;
+                let resp = match req {
+                    DaemonRequest::GetStatus => {
+                        let count = store.count_events().unwrap_or(0);
+                        DaemonResponse::Status {
+                            uptime_secs: started.elapsed().as_secs(),
+                            events_count: count,
+                            version: env!("CARGO_PKG_VERSION").into(),
+                        }
+                    }
+                    DaemonRequest::GetTimeline { since, until, limit } => {
+                        match store.query_events(since, until, limit) {
+                            Ok(events) => {
+                                let spans = events
+                                    .into_iter()
+                                    .map(|e| {
+                                        chronicle_core::Span::new(
+                                            chronicle_core::SpanType::Idle,
+                                            e.project.clone(),
+                                        )
+                                    })
+                                    .collect();
+                                DaemonResponse::Timeline { spans }
+                            }
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("query failed: {e}"),
+                            },
+                        }
+                    }
+                    DaemonRequest::EmitEvent { event } => {
+                        let event_id = event.id.to_string();
+                        if let Err(e) = store.insert_event(&event) {
+                            DaemonResponse::Error {
+                                code: 500,
+                                message: format!("insert failed: {e}"),
+                            }
+                        } else {
+                            DaemonResponse::Ack { event_id }
+                        }
+                    }
+                    _ => DaemonResponse::Error {
+                        code: 400,
+                        message: "unimplemented".into(),
+                    },
+                };
+                drop(store);
+                if let Err(e) = conn.send_response(resp).await {
+                    warn!("send response: {e}");
+                }
+            }
+        },
+        Err(e) => {
+            warn!("read request: {e}");
         }
     }
 }
