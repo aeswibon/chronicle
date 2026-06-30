@@ -1,0 +1,15 @@
+[package]
+name = "chronicle-mcp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chronicle-core = { path = "../chronicle-core" }
+chronicle-ipc = { path = "../chronicle-ipc" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

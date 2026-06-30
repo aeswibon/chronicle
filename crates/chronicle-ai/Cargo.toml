@@ -1,0 +1,11 @@
+[package]
+name = "chronicle-ai"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chronicle-core = { path = "../chronicle-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

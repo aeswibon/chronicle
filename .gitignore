@@ -1,0 +1,9 @@
+/target
+node_modules
+build
+.svelte-kit
+.env
+*.swp
+*.swo
+.DS_Store
+docs/superpowers
