@@ -61,29 +61,21 @@ impl ShellHookCollector {
 
                             let project_name = project::project_name_from_cwd(&cmd.cwd)
                                 .unwrap_or_else(|| {
-                                    cmd.cwd
-                                        .rsplit('/')
-                                        .next()
-                                        .unwrap_or("unknown")
-                                        .to_string()
+                                    cmd.cwd.rsplit('/').next().unwrap_or("unknown").to_string()
                                 });
 
-                            let mut event = CanonicalEvent::new(
-                                &source,
-                                EventCategory::Shell,
-                                event_type,
-                            )
-                            .with_project(&project_name)
-                            .with_duration(cmd.dur);
+                            let mut event =
+                                CanonicalEvent::new(&source, EventCategory::Shell, event_type)
+                                    .with_project(&project_name)
+                                    .with_duration(cmd.dur);
 
                             let meta = event.metadata.as_object_mut().unwrap();
                             meta.insert("command".into(), cmd.cmd.into());
-                            meta.insert(
-                                "exit_code".into(),
-                                cmd.exit_code.to_string().into(),
-                            );
+                            meta.insert("exit_code".into(), cmd.exit_code.to_string().into());
                             meta.insert("cwd".into(), cmd.cwd.clone().into());
-                            if let Some((_, root)) = project::detect_project(std::path::Path::new(&cmd.cwd)) {
+                            if let Some((_, root)) =
+                                project::detect_project(std::path::Path::new(&cmd.cwd))
+                            {
                                 meta.insert("project_path".into(), root.to_string_lossy().into());
                             }
 
@@ -105,4 +97,3 @@ impl ShellHookCollector {
         }
     }
 }
-

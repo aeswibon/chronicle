@@ -33,9 +33,7 @@ impl SpanProcessor {
         let span_type = category_to_span_type(&event.category);
 
         if let Some(active) = self.active.get_mut(&key) {
-            if active.last_activity.elapsed() > SESSION_TIMEOUT
-                || active.span_type != span_type
-            {
+            if active.last_activity.elapsed() > SESSION_TIMEOUT || active.span_type != span_type {
                 let mut span = Span::new(active.span_type.clone(), active.project.clone());
                 span.id = active.id;
                 span.trace_id = active.trace_id;

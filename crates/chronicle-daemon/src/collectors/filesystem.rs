@@ -37,16 +37,22 @@ const IGNORED_DIR_NAMES: &[&str] = &[
     "Logs",
 ];
 
-const IGNORED_FILE_NAMES: &[&str] = &[".DS_Store", "Thumbs.db", ".gitignore", "Cargo.lock", "bun.lock"];
+const IGNORED_FILE_NAMES: &[&str] = &[
+    ".DS_Store",
+    "Thumbs.db",
+    ".gitignore",
+    "Cargo.lock",
+    "bun.lock",
+];
 
 const IGNORED_EXTENSIONS: &[&str] = &[
     "o", "pyc", "pyo", "class", "swp", "swo", "map", "lock", "log", "tmp", "temp",
 ];
 
 const SOURCE_EXTENSIONS: &[&str] = &[
-    "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "swift", "c", "cpp", "h",
-    "hpp", "cs", "rb", "php", "sql", "md", "toml", "yaml", "yml", "json", "svelte",
-    "vue", "sh", "fish", "zsh",
+    "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "swift", "c", "cpp", "h", "hpp",
+    "cs", "rb", "php", "sql", "md", "toml", "yaml", "yml", "json", "svelte", "vue", "sh", "fish",
+    "zsh",
 ];
 
 pub struct FilesystemCollector {

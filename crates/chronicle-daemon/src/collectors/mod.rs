@@ -1,7 +1,7 @@
-pub mod window_focus;
 pub mod filesystem;
 pub mod git;
 pub mod shell;
+pub mod window_focus;
 
 use chronicle_core::CanonicalEvent;
 use tokio::sync::mpsc;

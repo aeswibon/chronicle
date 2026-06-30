@@ -5,22 +5,48 @@ pub use client::{Client, EventStream};
 pub use server::{Connection, Server};
 
 use chronicle_core::Span;
-use serde::{Deserialize, Serialize};
 pub use chronicle_core::{CanonicalEvent, ProjectRecord};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DaemonRequest {
-    Subscribe { event_types: Vec<String> },
-    GetTimeline { since: i64, until: Option<i64>, limit: u32 },
-    GetEvents { since: i64, until: Option<i64>, limit: u32 },
-    GetProjectContext { project: String },
-    Search { query: String, mode: SearchMode, limit: u32 },
-    ListProjects { limit: u32 },
-    GetErrors { since: i64, limit: u32 },
-    GetSessions { since: i64, until: Option<i64> },
+    Subscribe {
+        event_types: Vec<String>,
+    },
+    GetTimeline {
+        since: i64,
+        until: Option<i64>,
+        limit: u32,
+    },
+    GetEvents {
+        since: i64,
+        until: Option<i64>,
+        limit: u32,
+    },
+    GetProjectContext {
+        project: String,
+    },
+    Search {
+        query: String,
+        mode: SearchMode,
+        limit: u32,
+    },
+    ListProjects {
+        limit: u32,
+    },
+    GetErrors {
+        since: i64,
+        limit: u32,
+    },
+    GetSessions {
+        since: i64,
+        until: Option<i64>,
+    },
     GetStatus,
-    EmitEvent { event: CanonicalEvent },
+    EmitEvent {
+        event: CanonicalEvent,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -33,19 +59,35 @@ pub enum SearchMode {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DaemonResponse {
-    Event { event: CanonicalEvent },
-    Timeline { spans: Vec<Span> },
-    TimelineEvents { events: Vec<CanonicalEvent> },
-    Projects { projects: Vec<ProjectRecord> },
-    Status { uptime_secs: u64, events_count: u64, version: String },
-    Ack { event_id: String },
-    Error { code: u32, message: String },
+    Event {
+        event: CanonicalEvent,
+    },
+    Timeline {
+        spans: Vec<Span>,
+    },
+    TimelineEvents {
+        events: Vec<CanonicalEvent>,
+    },
+    Projects {
+        projects: Vec<ProjectRecord>,
+    },
+    Status {
+        uptime_secs: u64,
+        events_count: u64,
+        version: String,
+    },
+    Ack {
+        event_id: String,
+    },
+    Error {
+        code: u32,
+        message: String,
+    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     fn test_socket_path() -> String {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -172,9 +214,11 @@ mod tests {
             let req = conn.read_request().await.unwrap();
             match req {
                 DaemonRequest::EmitEvent { event: e } => {
-                    conn.send_response(DaemonResponse::Ack { event_id: e.id.to_string() })
-                        .await
-                        .unwrap();
+                    conn.send_response(DaemonResponse::Ack {
+                        event_id: e.id.to_string(),
+                    })
+                    .await
+                    .unwrap();
                 }
                 _ => panic!("unexpected request"),
             }

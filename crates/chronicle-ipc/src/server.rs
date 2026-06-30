@@ -17,8 +17,7 @@ impl Server {
         if std::fs::metadata(path).is_ok() {
             std::fs::remove_file(path).map_err(|e| format!("remove socket failed: {e}"))?;
         }
-        let listener =
-            UnixListener::bind(path).map_err(|e| format!("bind failed: {e}"))?;
+        let listener = UnixListener::bind(path).map_err(|e| format!("bind failed: {e}"))?;
         Ok(Self { listener })
     }
 

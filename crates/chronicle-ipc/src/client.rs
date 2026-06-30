@@ -24,11 +24,7 @@ impl Client {
     }
 
     pub async fn subscribe(mut self, event_types: Vec<String>) -> Result<EventStream, String> {
-        write_request(
-            &mut self.stream,
-            &DaemonRequest::Subscribe { event_types },
-        )
-        .await?;
+        write_request(&mut self.stream, &DaemonRequest::Subscribe { event_types }).await?;
         Ok(EventStream {
             stream: self.stream,
         })

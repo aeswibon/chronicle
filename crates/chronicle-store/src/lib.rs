@@ -79,9 +79,8 @@ impl Store {
                 id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
                 timestamp: row.get(1)?,
                 source: row.get(2)?,
-                category: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or(
-                    chronicle_core::EventCategory::Os,
-                ),
+                category: serde_json::from_str(&row.get::<_, String>(3)?)
+                    .unwrap_or(chronicle_core::EventCategory::Os),
                 r#type: row.get(4)?,
                 project: row.get(5)?,
                 workspace: row.get(6)?,
@@ -119,9 +118,8 @@ impl Store {
                 id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
                 timestamp: row.get(1)?,
                 source: row.get(2)?,
-                category: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or(
-                    chronicle_core::EventCategory::Os,
-                ),
+                category: serde_json::from_str(&row.get::<_, String>(3)?)
+                    .unwrap_or(chronicle_core::EventCategory::Os),
                 r#type: row.get(4)?,
                 project: row.get(5)?,
                 workspace: row.get(6)?,
@@ -153,12 +151,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn query_spans(
-        &self,
-        since: i64,
-        until: Option<i64>,
-        limit: u32,
-    ) -> SqlResult<Vec<Span>> {
+    pub fn query_spans(&self, since: i64, until: Option<i64>, limit: u32) -> SqlResult<Vec<Span>> {
         let until = until.unwrap_or(i64::MAX);
         let mut stmt = self.conn.prepare_cached(
             "SELECT id, trace_id, parent_id, span_type, project, started_at, ended_at, duration_ms, event_count, metadata
@@ -171,9 +164,8 @@ impl Store {
                 id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
                 trace_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
                 parent_id: parent_id.and_then(|s| s.parse().ok()),
-                span_type: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or(
-                    chronicle_core::SpanType::Idle,
-                ),
+                span_type: serde_json::from_str(&row.get::<_, String>(3)?)
+                    .unwrap_or(chronicle_core::SpanType::Idle),
                 project: row.get(4)?,
                 started_at: row.get(5)?,
                 ended_at: row.get(6)?,
@@ -201,9 +193,8 @@ impl Store {
                 id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
                 timestamp: row.get(1)?,
                 source: row.get(2)?,
-                category: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or(
-                    chronicle_core::EventCategory::Os,
-                ),
+                category: serde_json::from_str(&row.get::<_, String>(3)?)
+                    .unwrap_or(chronicle_core::EventCategory::Os),
                 r#type: row.get(4)?,
                 project: row.get(5)?,
                 workspace: row.get(6)?,
@@ -250,12 +241,7 @@ impl Store {
         Ok(count)
     }
 
-    pub fn upsert_project(
-        &self,
-        name: &str,
-        path: &str,
-        language: Option<&str>,
-    ) -> SqlResult<()> {
+    pub fn upsert_project(&self, name: &str, path: &str, language: Option<&str>) -> SqlResult<()> {
         let mut stmt = self.conn.prepare_cached(
             "INSERT INTO projects (name, path, last_active, language)
              VALUES (?1, ?2, ?3, ?4)
@@ -288,8 +274,7 @@ impl Store {
 }
 
 fn is_repo_path(path: &std::path::Path) -> bool {
-    path.is_absolute()
-        && (path.join(".git").exists() || path.join("Cargo.toml").exists())
+    path.is_absolute() && (path.join(".git").exists() || path.join("Cargo.toml").exists())
 }
 
 fn build_fts_query(query: &str) -> String {
@@ -399,8 +384,12 @@ mod tests {
     #[test]
     fn test_upsert_project() {
         let store = setup_store();
-        store.upsert_project("chronicle", "/dev/chronicle", Some("Rust")).unwrap();
-        store.upsert_project("chronicle", "/dev/chronicle", Some("Rust")).unwrap(); // upsert
+        store
+            .upsert_project("chronicle", "/dev/chronicle", Some("Rust"))
+            .unwrap();
+        store
+            .upsert_project("chronicle", "/dev/chronicle", Some("Rust"))
+            .unwrap(); // upsert
     }
 
     #[test]

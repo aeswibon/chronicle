@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::broadcast;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
 pub struct Daemon {
@@ -55,8 +55,7 @@ impl Daemon {
             })
             .collect();
 
-        let server = Server::bind(&self.socket_path)
-            .map_err(|e| anyhow::anyhow!("bind: {e}"))?;
+        let server = Server::bind(&self.socket_path).map_err(|e| anyhow::anyhow!("bind: {e}"))?;
         let started_at = Instant::now();
         let event_counter = Arc::new(AtomicU64::new(0));
 
@@ -71,18 +70,14 @@ impl Daemon {
         });
 
         let collectors: Vec<collectors::Collector> = vec![
-            collectors::Collector::WindowFocus(
-                collectors::window_focus::WindowFocusCollector,
-            ),
-            collectors::Collector::Filesystem(
-                collectors::filesystem::FilesystemCollector::new(
-                    if watch_dirs.is_empty() {
-                        None
-                    } else {
-                        Some(watch_dirs.clone())
-                    },
-                ),
-            ),
+            collectors::Collector::WindowFocus(collectors::window_focus::WindowFocusCollector),
+            collectors::Collector::Filesystem(collectors::filesystem::FilesystemCollector::new(
+                if watch_dirs.is_empty() {
+                    None
+                } else {
+                    Some(watch_dirs.clone())
+                },
+            )),
             collectors::Collector::Shell(collectors::shell::ShellHookCollector),
             collectors::Collector::Git(collectors::git::GitCollector::new(watch_dirs.clone())),
         ];
@@ -220,23 +215,21 @@ async fn handle_connection(
 ) {
     match conn.read_request().await {
         Ok(req) => match req {
-            DaemonRequest::Subscribe { .. } => {
-                loop {
-                    match broadcast_rx.recv().await {
-                        Ok(event) => {
-                            if conn
-                                .send_response(DaemonResponse::Event { event })
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
+            DaemonRequest::Subscribe { .. } => loop {
+                match broadcast_rx.recv().await {
+                    Ok(event) => {
+                        if conn
+                            .send_response(DaemonResponse::Event { event })
+                            .await
+                            .is_err()
+                        {
+                            break;
                         }
-                        Err(broadcast::error::RecvError::Closed) => break,
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 }
-            }
+            },
             _ => {
                 let store = store.lock().await;
                 let resp = match req {
@@ -248,42 +241,46 @@ async fn handle_connection(
                             version: env!("CARGO_PKG_VERSION").into(),
                         }
                     }
-                    DaemonRequest::GetTimeline { since, until, limit } => {
-                        match store.query_spans(since, until, limit) {
-                            Ok(spans) => DaemonResponse::Timeline { spans },
-                            Err(e) => DaemonResponse::Error {
-                                code: 500,
-                                message: format!("query failed: {e}"),
-                            },
-                        }
-                    }
-                    DaemonRequest::GetEvents { since, until, limit } => {
-                        match store.query_activity_events(since, until, limit) {
-                            Ok(events) => DaemonResponse::TimelineEvents { events },
-                            Err(e) => DaemonResponse::Error {
-                                code: 500,
-                                message: format!("query failed: {e}"),
-                            },
-                        }
-                    }
-                    DaemonRequest::Search { query, mode: _, limit } => {
-                        match store.search_events(&query, limit) {
-                            Ok(events) => DaemonResponse::TimelineEvents { events },
-                            Err(e) => DaemonResponse::Error {
-                                code: 500,
-                                message: format!("search failed: {e}"),
-                            },
-                        }
-                    }
-                    DaemonRequest::ListProjects { limit } => {
-                        match store.query_projects(limit) {
-                            Ok(projects) => DaemonResponse::Projects { projects },
-                            Err(e) => DaemonResponse::Error {
-                                code: 500,
-                                message: format!("projects query failed: {e}"),
-                            },
-                        }
-                    }
+                    DaemonRequest::GetTimeline {
+                        since,
+                        until,
+                        limit,
+                    } => match store.query_spans(since, until, limit) {
+                        Ok(spans) => DaemonResponse::Timeline { spans },
+                        Err(e) => DaemonResponse::Error {
+                            code: 500,
+                            message: format!("query failed: {e}"),
+                        },
+                    },
+                    DaemonRequest::GetEvents {
+                        since,
+                        until,
+                        limit,
+                    } => match store.query_activity_events(since, until, limit) {
+                        Ok(events) => DaemonResponse::TimelineEvents { events },
+                        Err(e) => DaemonResponse::Error {
+                            code: 500,
+                            message: format!("query failed: {e}"),
+                        },
+                    },
+                    DaemonRequest::Search {
+                        query,
+                        mode: _,
+                        limit,
+                    } => match store.search_events(&query, limit) {
+                        Ok(events) => DaemonResponse::TimelineEvents { events },
+                        Err(e) => DaemonResponse::Error {
+                            code: 500,
+                            message: format!("search failed: {e}"),
+                        },
+                    },
+                    DaemonRequest::ListProjects { limit } => match store.query_projects(limit) {
+                        Ok(projects) => DaemonResponse::Projects { projects },
+                        Err(e) => DaemonResponse::Error {
+                            code: 500,
+                            message: format!("projects query failed: {e}"),
+                        },
+                    },
                     DaemonRequest::EmitEvent { event } => {
                         let event_id = event.id.to_string();
                         if let Err(e) = store.insert_event(&event) {
