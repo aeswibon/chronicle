@@ -4,8 +4,8 @@
   /** @type {{ name: string, path: string, size?: number, iconUrl?: string | null, class?: string }} */
   let { name, path, size = 36, iconUrl = null, class: className = '' } = $props();
 
-  let dataUrl = $state(iconUrl);
-  let loading = $state(!iconUrl);
+  let dataUrl = $state(null);
+  let loading = $state(true);
 
   $effect(() => {
     if (iconUrl) {

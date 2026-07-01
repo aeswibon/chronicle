@@ -92,8 +92,16 @@ Settings → Secrets and variables → Actions → **Variables**:
 
 ### Local test before tagging
 
+Unsigned `tauri build` uses **adhoc / linker signing** — `spctl` will report errors like `code has no resources but signature indicates they must be present`. That is expected without a Developer ID.
+
+For a real signed + notarized local build, import your `.p12` into Keychain, then:
+
 ```bash
-export APPLE_SIGNING_IDENTITY="Developer ID Application: …"
+export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+export APPLE_ID="you@example.com"
+export APPLE_PASSWORD="xxxx-xxxx-xxxx-xxxx"   # app-specific password
+export APPLE_TEAM_ID="AB12CD34EF"
+
 bun run tauri build --target aarch64-apple-darwin
 spctl -a -vv src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Chronicle.app
 ```
