@@ -54,6 +54,45 @@ impl Default for PrivacyConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AiConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_ollama_base")]
+    pub base_url: String,
+    #[serde(default = "default_ai_model")]
+    pub model: String,
+    /// Env var name holding API key (optional; Ollama needs none).
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    #[serde(default = "default_ai_timeout")]
+    pub timeout_secs: u64,
+}
+
+fn default_ollama_base() -> String {
+    "http://127.0.0.1:11434".into()
+}
+
+fn default_ai_model() -> String {
+    "llama3.2".into()
+}
+
+fn default_ai_timeout() -> u64 {
+    60
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: default_ollama_base(),
+            model: default_ai_model(),
+            api_key_env: None,
+            timeout_secs: default_ai_timeout(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct ChronicleConfig {
     #[serde(default)]
@@ -62,6 +101,8 @@ pub struct ChronicleConfig {
     pub collectors: CollectorsConfig,
     #[serde(default)]
     pub privacy: PrivacyConfig,
+    #[serde(default)]
+    pub ai: AiConfig,
 }
 
 pub fn config_path() -> PathBuf {

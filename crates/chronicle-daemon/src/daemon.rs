@@ -213,6 +213,7 @@ async fn process_events(
         }
 
         rule_engine.process(&mut event);
+        chronicle_ai::enrich_event(&mut event);
 
         {
             let guard = store.lock().await;
@@ -394,21 +395,38 @@ async fn handle_connection(
                     }
                     DaemonRequest::SummarizeDay { since, until } => {
                         let until = until.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+                        let ai_cfg = chronicle_config::load().ai;
                         match store.query_spans(since, Some(until), 200) {
                             Ok(spans) => match store.query_activity_events(since, Some(until), 500)
                             {
                                 Ok(events) => {
+                                    let (summary, source) = chronicle_ai::summarize_day(
+                                        &ai_cfg, since, until, &spans, &events,
+                                    )
+                                    .await;
                                     let session = chronicle_ai::build_daily_session(
-                                        since, until, &spans, &events,
+                                        since,
+                                        until,
+                                        &spans,
+                                        &events,
+                                        summary.clone(),
                                     );
-                                    let summary = session.summary.clone().unwrap_or_default();
+                                    let source = match source {
+                                        chronicle_ai::SummarySource::Ai => "ai",
+                                        chronicle_ai::SummarySource::Rules => "rules",
+                                    }
+                                    .to_string();
                                     if let Err(e) = store.insert_session(&session) {
                                         DaemonResponse::Error {
                                             code: 500,
                                             message: format!("session persist failed: {e}"),
                                         }
                                     } else {
-                                        DaemonResponse::DailySummary { summary, session }
+                                        DaemonResponse::DailySummary {
+                                            summary,
+                                            session,
+                                            source: Some(source),
+                                        }
                                     }
                                 }
                                 Err(e) => DaemonResponse::Error {
@@ -431,17 +449,20 @@ async fn handle_connection(
                             watch_dirs: cfg.watch_dirs,
                             collectors: cfg.collectors,
                             privacy: cfg.privacy,
+                            ai: cfg.ai,
                         }
                     }
                     DaemonRequest::SetConfig {
                         watch_dirs,
                         collectors,
                         privacy,
+                        ai,
                     } => {
                         let mut cfg = chronicle_config::load();
                         cfg.watch_dirs = watch_dirs;
                         cfg.collectors = collectors;
                         cfg.privacy = privacy;
+                        cfg.ai = ai;
                         match chronicle_config::save(&cfg) {
                             Ok(()) => DaemonResponse::Ack {
                                 event_id: "config_saved".into(),

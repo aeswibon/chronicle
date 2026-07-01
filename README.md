@@ -1,6 +1,18 @@
 # Chronicle
 
-**Local-first developer observability** for macOS.
+**Local-first developer observability** for macOS (collectors) with portable daemon, MCP, and UI.
+
+## Platform status
+
+| Component | macOS | Linux / Windows |
+|-----------|-------|-----------------|
+| Daemon + SQLite + IPC | Yes | Yes |
+| Shell / git / filesystem collectors | Yes | Partial (no window focus) |
+| HTTP ingress (`:9713`) + extensions | Yes | Yes |
+| Tauri UI | Yes | Build from source |
+| launchd install | Yes | Use manual `chronicle-daemon start` |
+
+See [`plugins/README.md`](plugins/README.md) for plugin manifests and [`extensions/README.md`](extensions/README.md) for IDE/browser emitters.
 
 Chronicle automatically records what you were doing while coding — window focus, git operations, terminal commands, and meaningful file changes — and stores it in a local SQLite database. Browse timelines in a Tauri + Svelte desktop app, search your history, or query it from AI tools via MCP.
 

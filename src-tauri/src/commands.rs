@@ -146,6 +146,7 @@ pub async fn get_sessions(
 pub struct SummarizeResult {
     pub summary: String,
     pub persisted: bool,
+    pub source: String,
     pub notice: Option<String>,
 }
 
@@ -184,12 +185,19 @@ async fn summarize_day_fallback(
         _ => return Err("unexpected events response".into()),
     };
 
-    let session = chronicle_ai::build_daily_session(since, until, &spans, &events);
+    let cfg = chronicle_config::load();
+    let (summary, source) =
+        chronicle_ai::summarize_day(&cfg.ai, since, until, &spans, &events).await;
+    let source = match source {
+        chronicle_ai::SummarySource::Ai => "ai",
+        chronicle_ai::SummarySource::Rules => "rules",
+    };
     Ok(SummarizeResult {
-        summary: session.summary.unwrap_or_default(),
+        summary,
         persisted: false,
+        source: source.into(),
         notice: Some(
-            "Summary generated locally. Rebuild and restart the daemon to persist rollups: cargo build --release -p chronicle-daemon && chronicle-daemon install && launchctl kickstart -k gui/$(id -u)/com.chronicle.daemon".into(),
+            "Summary generated locally. Rebuild and restart the daemon to persist rollups: make install-daemon".into(),
         ),
     })
 }
@@ -211,9 +219,14 @@ pub async fn summarize_day(
         })
         .await?
     {
-        DaemonResponse::DailySummary { summary, .. } => Ok(SummarizeResult {
+        DaemonResponse::DailySummary {
+            summary,
+            source,
+            ..
+        } => Ok(SummarizeResult {
             summary,
             persisted: true,
+            source: source.unwrap_or_else(|| "rules".into()),
             notice: None,
         }),
         DaemonResponse::Error { message, .. } if summarize_needs_fallback(&message) => {
@@ -306,10 +319,20 @@ pub struct PrivacyInfo {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct AiInfo {
+    pub enabled: bool,
+    pub base_url: String,
+    pub model: String,
+    pub api_key_env: Option<String>,
+    pub timeout_secs: u64,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct ConfigInfo {
     pub watch_dirs: Vec<String>,
     pub collectors: CollectorsInfo,
     pub privacy: PrivacyInfo,
+    pub ai: AiInfo,
 }
 
 impl From<chronicle_config::CollectorsConfig> for CollectorsInfo {
@@ -356,6 +379,30 @@ impl From<PrivacyInfo> for chronicle_config::PrivacyConfig {
     }
 }
 
+impl From<chronicle_config::AiConfig> for AiInfo {
+    fn from(a: chronicle_config::AiConfig) -> Self {
+        Self {
+            enabled: a.enabled,
+            base_url: a.base_url,
+            model: a.model,
+            api_key_env: a.api_key_env,
+            timeout_secs: a.timeout_secs,
+        }
+    }
+}
+
+impl From<AiInfo> for chronicle_config::AiConfig {
+    fn from(a: AiInfo) -> Self {
+        Self {
+            enabled: a.enabled,
+            base_url: a.base_url,
+            model: a.model,
+            api_key_env: a.api_key_env,
+            timeout_secs: a.timeout_secs,
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn get_config(_state: State<'_, DaemonState>) -> Result<ConfigInfo, String> {
     tokio::task::spawn_blocking(|| {
@@ -364,6 +411,7 @@ pub async fn get_config(_state: State<'_, DaemonState>) -> Result<ConfigInfo, St
             watch_dirs: cfg.watch_dirs,
             collectors: cfg.collectors.into(),
             privacy: cfg.privacy.into(),
+            ai: cfg.ai.into(),
         }
     })
     .await
@@ -376,12 +424,14 @@ pub async fn set_config(
     watch_dirs: Vec<String>,
     collectors: CollectorsInfo,
     privacy: PrivacyInfo,
+    ai: AiInfo,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let cfg = chronicle_config::ChronicleConfig {
             watch_dirs,
             collectors: collectors.into(),
             privacy: privacy.into(),
+            ai: ai.into(),
         };
         chronicle_config::save(&cfg).map_err(|e| e.to_string())
     })

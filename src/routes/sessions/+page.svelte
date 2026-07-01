@@ -9,7 +9,8 @@
   let error = $state('');
   let notice = $state('');
   let generating = $state(false);
-  /** @type {{ summary: string; started_at: number; session_type: string; span_count: number; event_count: number } | null} */
+  let summarySource = $state('');
+  /** @type {{ summary: string; started_at: number; session_type: string; span_count: number; event_count: number; source?: string } | null} */
   let preview = $state(null);
 
   async function load() {
@@ -31,10 +32,12 @@
     error = '';
     notice = '';
     preview = null;
+    summarySource = '';
     try {
       const since = new Date();
       since.setHours(0, 0, 0, 0);
       const result = await invoke('summarize_day', { since: since.getTime(), until: null });
+      summarySource = result.source ?? 'rules';
       if (result.persisted) {
         preview = null;
         await load();
@@ -45,6 +48,7 @@
           session_type: 'focus',
           span_count: 0,
           event_count: 0,
+          source: summarySource,
         };
         notice = result.notice ?? 'Summary was not saved to the database.';
       }
@@ -80,7 +84,20 @@
 
   {#if preview}
     <article class="bg-[var(--bg-elevated)] border border-[var(--accent)]/40 rounded-xl px-5 py-4 mb-6">
-      <p class="text-xs font-medium text-[var(--accent)] uppercase tracking-wider mb-2">Today's summary</p>
+      <div class="flex items-center justify-between gap-3 mb-2">
+        <p class="text-xs font-medium text-[var(--accent)] uppercase tracking-wider">Today's summary</p>
+        {#if preview.source}
+          <span
+            class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border"
+            class:border-[var(--accent)]={preview.source === 'ai'}
+            class:text-[var(--accent)]={preview.source === 'ai'}
+            class:border-[var(--border)]={preview.source !== 'ai'}
+            class:text-[var(--text-muted)]={preview.source !== 'ai'}
+          >
+            {preview.source === 'ai' ? 'AI' : 'Rules'}
+          </span>
+        {/if}
+      </div>
       <p class="text-sm text-[var(--text-secondary)] leading-relaxed">{preview.summary}</p>
     </article>
   {/if}

@@ -18,6 +18,13 @@
     retention_days: null,
     redact_shell_secrets: true,
   });
+  let ai = $state({
+    enabled: false,
+    base_url: 'http://127.0.0.1:11434',
+    model: 'llama3.2',
+    api_key_env: '',
+    timeout_secs: 60,
+  });
   let shellChoice = $state('zsh');
   let configMessage = $state('');
   let hookMessage = $state('');
@@ -44,6 +51,15 @@
           redact_shell_secrets: cfg.privacy.redact_shell_secrets ?? true,
         };
       }
+      if (cfg.ai) {
+        ai = {
+          enabled: cfg.ai.enabled ?? false,
+          base_url: cfg.ai.base_url ?? 'http://127.0.0.1:11434',
+          model: cfg.ai.model ?? 'llama3.2',
+          api_key_env: cfg.ai.api_key_env ?? '',
+          timeout_secs: cfg.ai.timeout_secs ?? 60,
+        };
+      }
     } catch {}
   });
 
@@ -66,6 +82,13 @@
           strip_query_params: privacy.strip_query_params,
           retention_days: privacy.retention_days,
           redact_shell_secrets: privacy.redact_shell_secrets,
+        },
+        ai: {
+          enabled: ai.enabled,
+          base_url: ai.base_url.trim(),
+          model: ai.model.trim(),
+          api_key_env: ai.api_key_env.trim() || null,
+          timeout_secs: ai.timeout_secs,
         },
       });
       configMessage = 'Saved. Restart the daemon for watch dirs and collector toggles to take effect.';
@@ -186,6 +209,72 @@
         class="mt-1 w-32 text-sm bg-[var(--bg-muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--text)]"
       />
     </label>
+  </section>
+
+  <section class="mb-8">
+    <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">AI summaries</h3>
+    <p class="text-sm text-[var(--text-secondary)] leading-relaxed mb-4">
+      Daily session rollups use an OpenAI-compatible chat API when enabled (Ollama at
+      <code class="font-mono text-xs">127.0.0.1:11434</code> by default). Falls back to rule-based text if disabled or unreachable.
+    </p>
+    <div class="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl divide-y divide-[var(--border-subtle)] mb-4">
+      <label class="flex items-start gap-4 px-5 py-4 cursor-pointer">
+        <input type="checkbox" class="mt-1 accent-[var(--accent)]" bind:checked={ai.enabled} />
+        <span>
+          <span class="text-sm text-[var(--text)] block">Enable AI summaries</span>
+          <span class="text-xs text-[var(--text-muted)]">Uses enriched event metadata for richer daily reports</span>
+        </span>
+      </label>
+    </div>
+    <div class="grid gap-4 sm:grid-cols-2 mb-4">
+      <label class="block text-sm text-[var(--text-secondary)]">
+        Base URL
+        <input
+          type="url"
+          bind:value={ai.base_url}
+          placeholder="http://127.0.0.1:11434"
+          class="mt-1 w-full text-sm font-mono bg-[var(--bg-muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--text)]"
+        />
+      </label>
+      <label class="block text-sm text-[var(--text-secondary)]">
+        Model
+        <input
+          type="text"
+          bind:value={ai.model}
+          placeholder="llama3.2"
+          class="mt-1 w-full text-sm font-mono bg-[var(--bg-muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--text)]"
+        />
+      </label>
+      <label class="block text-sm text-[var(--text-secondary)]">
+        API key env var
+        <input
+          type="text"
+          bind:value={ai.api_key_env}
+          placeholder="OPENAI_API_KEY (optional)"
+          class="mt-1 w-full text-sm font-mono bg-[var(--bg-muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--text)]"
+        />
+      </label>
+      <label class="block text-sm text-[var(--text-secondary)]">
+        Timeout (seconds)
+        <input
+          type="number"
+          min="10"
+          max="300"
+          bind:value={ai.timeout_secs}
+          class="mt-1 w-full text-sm bg-[var(--bg-muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--text)]"
+        />
+      </label>
+    </div>
+    <div class="flex items-center gap-3">
+      <button
+        type="button"
+        onclick={saveSettings}
+        disabled={saving}
+        class="px-4 py-2 text-sm rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+      >
+        {saving ? 'Saving…' : 'Save AI settings'}
+      </button>
+    </div>
   </section>
 
   <section class="mb-8">

@@ -274,7 +274,7 @@ impl ChronicleMcp {
     }
 
     #[tool(
-        description = "Generate and store a rule-based daily work summary from spans and events"
+        description = "Generate and store a daily work summary from spans and events (AI when enabled, else rules)"
     )]
     async fn get_daily_summary(
         &self,
@@ -286,9 +286,14 @@ impl ChronicleMcp {
                 .request(DaemonRequest::SummarizeDay { since, until: None })
                 .await
             {
-                Ok(DaemonResponse::DailySummary { summary, session }) => text_result(
+                Ok(DaemonResponse::DailySummary {
+                    summary,
+                    session,
+                    source,
+                }) => text_result(
                     serde_json::to_string_pretty(&serde_json::json!({
                         "summary": summary,
+                        "source": source.unwrap_or_else(|| "rules".into()),
                         "session": session,
                     }))
                     .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}")),

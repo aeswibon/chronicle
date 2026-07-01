@@ -1,7 +1,22 @@
-//! Rule-based summaries and semantic query expansion (no external LLM required).
+//! AI-enhanced summaries and event metadata enrichment.
 
+pub mod context;
+pub mod enrich;
+pub mod llm;
+pub mod rule_summary;
+
+pub use context::DayReportContext;
+pub use enrich::enrich_event;
+
+use chronicle_config::AiConfig;
 use chronicle_core::{CanonicalEvent, Session, SessionType, Span};
-use std::collections::HashSet;
+use tracing::{debug, warn};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SummarySource {
+    Ai,
+    Rules,
+}
 
 /// Expand a user query for FTS when semantic mode is requested.
 pub fn expand_search_query(query: &str) -> String {
@@ -41,79 +56,36 @@ pub fn expand_search_query(query: &str) -> String {
     query.to_string()
 }
 
-/// Build a human-readable daily work summary from spans and events.
-pub fn daily_summary(spans: &[Span], events: &[CanonicalEvent]) -> String {
-    let mut projects: HashSet<String> = HashSet::new();
-    let mut labels: HashSet<String> = HashSet::new();
-    let mut errors = 0u32;
-
-    for span in spans {
-        if let Some(p) = &span.project {
-            projects.insert(p.clone());
-        }
-        if let Some(obj) = span.metadata.as_object() {
-            if let Some(arr) = obj.get("activity_labels").and_then(|v| v.as_array()) {
-                for label in arr {
-                    if let Some(s) = label.as_str() {
-                        labels.insert(s.to_string());
-                    }
-                }
+/// Generate a daily summary using AI when configured, else rule-based fallback.
+pub async fn summarize_day(
+    ai: &AiConfig,
+    since: i64,
+    until: i64,
+    spans: &[Span],
+    events: &[CanonicalEvent],
+) -> (String, SummarySource) {
+    let prepared: Vec<CanonicalEvent> = events
+        .iter()
+        .map(|e| {
+            let mut e = e.clone();
+            enrich_event(&mut e);
+            e
+        })
+        .collect();
+    let ctx = DayReportContext::build(since, until, spans, &prepared);
+    if ai.enabled {
+        match llm::generate_summary(ai, &ctx).await {
+            Ok(text) => {
+                debug!("AI daily summary generated ({} chars)", text.len());
+                return (text, SummarySource::Ai);
             }
+            Err(e) => warn!("AI summary failed, using rules: {e}"),
         }
     }
-
-    for event in events {
-        if let Some(p) = &event.project {
-            projects.insert(p.clone());
-        }
-        if let Some(label) = event
-            .metadata
-            .get("activity_label")
-            .and_then(|v| v.as_str())
-        {
-            labels.insert(label.to_string());
-        }
-        if event.category == chronicle_core::EventCategory::Shell
-            && event
-                .metadata
-                .get("exit_code")
-                .and_then(|v| v.as_str())
-                .is_some_and(|c| c != "0")
-        {
-            errors += 1;
-        }
-    }
-
-    let mut parts = Vec::new();
-    parts.push(format!(
-        "{} focus session{}",
-        spans.len(),
-        if spans.len() == 1 { "" } else { "s" }
-    ));
-    parts.push(format!(
-        "{} activity event{}",
-        events.len(),
-        if events.len() == 1 { "" } else { "s" }
-    ));
-
-    if !projects.is_empty() {
-        let mut list: Vec<_> = projects.into_iter().collect();
-        list.sort();
-        parts.push(format!("Projects: {}", list.join(", ")));
-    }
-    if !labels.is_empty() {
-        let mut list: Vec<_> = labels.into_iter().collect();
-        list.sort();
-        parts.push(format!("Activities: {}", list.join(", ")));
-    }
-    if errors > 0 {
-        parts.push(format!(
-            "{errors} failed command{}",
-            if errors == 1 { "" } else { "s" }
-        ));
-    }
-
-    parts.join(". ") + "."
+    (
+        rule_summary::daily_summary(spans, &prepared),
+        SummarySource::Rules,
+    )
 }
 
 /// Materialize a rollup `Session` row for persistence.
@@ -122,8 +94,8 @@ pub fn build_daily_session(
     until: i64,
     spans: &[Span],
     events: &[CanonicalEvent],
+    summary: String,
 ) -> Session {
-    let summary = daily_summary(spans, events);
     let duration_ms = (until - since).max(0) as u64;
     let project = spans
         .iter()
@@ -160,14 +132,13 @@ mod tests {
     }
 
     #[test]
-    fn summary_lists_projects() {
+    fn enrich_then_context() {
+        let mut e = CanonicalEvent::new("cargo", EventCategory::Shell, "command.failed");
+        e.project = Some("chronicle".into());
+        e.metadata = serde_json::json!({"command": "cargo test", "exit_code": "1"});
+        enrich_event(&mut e);
         let span = Span::new(chronicle_core::SpanType::Coding, Some("chronicle".into()));
-        let events = vec![CanonicalEvent::new(
-            "zsh",
-            EventCategory::Shell,
-            "command.completed",
-        )];
-        let text = daily_summary(&[span], &events);
-        assert!(text.contains("chronicle"));
+        let ctx = DayReportContext::build(0, 1000, &[span], &[e]);
+        assert!(!ctx.highlights.is_empty());
     }
 }

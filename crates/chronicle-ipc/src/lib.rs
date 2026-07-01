@@ -57,6 +57,8 @@ pub enum DaemonRequest {
         collectors: chronicle_config::CollectorsConfig,
         #[serde(default)]
         privacy: chronicle_config::PrivacyConfig,
+        #[serde(default)]
+        ai: chronicle_config::AiConfig,
     },
     InstallShellHook {
         shell: Option<String>,
@@ -106,6 +108,7 @@ pub enum DaemonResponse {
         watch_dirs: Vec<String>,
         collectors: chronicle_config::CollectorsConfig,
         privacy: chronicle_config::PrivacyConfig,
+        ai: chronicle_config::AiConfig,
     },
     Status {
         uptime_secs: u64,
@@ -121,6 +124,8 @@ pub enum DaemonResponse {
     DailySummary {
         summary: String,
         session: chronicle_core::Session,
+        #[serde(default)]
+        source: Option<String>,
     },
     Plugins {
         plugins: Vec<chronicle_plugin::PluginRecord>,
