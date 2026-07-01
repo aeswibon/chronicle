@@ -69,35 +69,51 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           pattern: chronicle-*
           merge-multiple: true
 
-      - name: Generate release notes
+      - name: Generate release notes from CHANGELOG
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          cat > release-notes.md <<EOF
-          ## Chronicle v${VERSION}
+          TAG="${GITHUB_REF_NAME}"
 
-          First public release of Chronicle — a local developer observability app for macOS.
+          if ! grep -q "^## \[${VERSION}\]" CHANGELOG.md; then
+            echo "No CHANGELOG section for version ${VERSION}" >&2
+            exit 1
+          fi
 
-          ### Highlights
-          - Timeline, projects, sessions, and search over local dev activity
-          - Git reflog capture (commits, pushes, pulls) with automatic backfill
-          - Per-user daemon auto-start (no admin password)
-          - Optional AI daily summaries via Ollama
+          {
+            awk -v ver="${VERSION}" '
+              $0 ~ "^## \\[" ver "\\]" { found=1; next }
+              found && /^## \[/ { exit }
+              found { print }
+            ' CHANGELOG.md
 
-          ### Install
-          1. Download the DMG for your Mac (Apple Silicon → arm64, Intel → x64)
-          2. Open **Chronicle.app** and allow the background service to start
-          3. Optional: Settings → Install shell hook for terminal capture
+            echo ""
+            echo "### Install"
+            echo "1. Download the DMG for your Mac (Apple Silicon → arm64, Intel → x64)"
+            echo "2. Open **Chronicle.app** — the background service starts automatically"
+            echo "3. Optional: Settings → Install shell hook for terminal capture"
+            echo ""
+            echo "### Downloads"
+            for f in chronicle-*.dmg; do
+              echo "- [$f](https://github.com/${{ github.repository }}/releases/download/${TAG}/$f)"
+            done
+            echo ""
+            echo "### Checksums"
+            for f in checksums-*.txt; do
+              echo '```'
+              cat "$f"
+              echo '```'
+            done
+          } > release-notes.md
 
-          ### Downloads
-          EOF
-          for f in chronicle-*.dmg; do
-            echo "- [$f](https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/$f)" >> release-notes.md
-          done
+          echo "--- release-notes.md ---"
+          cat release-notes.md
 
       - uses: softprops/action-gh-release@v2
         with:
