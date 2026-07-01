@@ -4,7 +4,7 @@
   import PageShell from '$lib/components/PageShell.svelte';
   import ProjectIcon from '$lib/components/ProjectIcon.svelte';
   import { preloadPathIcons } from '$lib/appIcons.js';
-  import { formatDateTime } from '$lib/format.js';
+  import { formatDateTime, formatPathMiddle } from '$lib/format.js';
 
   let projects = $state([]);
   /** @type {Record<string, string>} */
@@ -56,16 +56,16 @@
       {#each projects as proj}
         <a
           href="/projects/{encodeURIComponent(proj.name)}"
-          class="flex items-center justify-between bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-5 py-4 hover:border-[var(--accent)]/30 transition-colors"
+          class="flex items-center gap-4 min-w-0 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-5 py-4 hover:border-[var(--accent)]/30 transition-colors overflow-hidden"
         >
-          <div class="flex items-center gap-4 min-w-0">
-            <ProjectIcon name={proj.name} path={proj.path} size={36} iconUrl={iconUrls[proj.path] ?? null} />
-            <div class="min-w-0">
-              <p class="text-sm font-medium text-[var(--text)] truncate">{proj.name}</p>
-              <p class="text-xs text-[var(--text-muted)] mt-0.5 truncate font-mono">{proj.path}</p>
-            </div>
+          <ProjectIcon name={proj.name} path={proj.path} size={36} iconUrl={iconUrls[proj.path] ?? null} class="shrink-0" />
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-medium text-[var(--text)] truncate">{proj.name}</p>
+            <p class="text-xs text-[var(--text-muted)] mt-0.5 font-mono truncate" title={proj.path}>
+              {formatPathMiddle(proj.path, 56)}
+            </p>
           </div>
-          <div class="text-right shrink-0 ml-4">
+          <div class="text-right shrink-0 ml-2 max-w-[7rem]">
             <p class="text-xs text-[var(--text-muted)] tabular-nums">{formatDateTime(proj.last_active)}</p>
             {#if proj.language}
               <p class="text-xs text-[var(--text-secondary)] mt-0.5">{proj.language}</p>

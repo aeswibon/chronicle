@@ -7,8 +7,9 @@ use tracing::{debug, info, warn};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(20);
 const RESCAN_INTERVAL: Duration = Duration::from_secs(120);
-/// On startup (or first sight of a reflog file), ingest entries within this window.
-const BACKFILL_WINDOW_MS: i64 = 72 * 3_600_000;
+/// Limited backfill for HEAD/main only when cursors already exist (upgrade path).
+const BACKFILL_WINDOW_MS: i64 = 12 * 3_600_000;
+const BACKFILL_MAX_LINES: usize = 40;
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 struct PersistedGitCursors {
@@ -28,11 +29,14 @@ struct GitScanState {
     head_content: HashMap<String, String>,
     dirty: bool,
     logged_repos: HashSet<String>,
+    /// First daemon run: seed cursors only — do not ingest historical reflogs.
+    bootstrap: bool,
 }
 
 impl GitScanState {
     fn load() -> Self {
         let path = cursors_path();
+        let file_existed = path.exists();
         let persisted: PersistedGitCursors = std::fs::read_to_string(&path)
             .ok()
             .and_then(|raw| serde_json::from_str(&raw).ok())
@@ -42,6 +46,7 @@ impl GitScanState {
             head_content: persisted.head_content,
             dirty: false,
             logged_repos: HashSet::new(),
+            bootstrap: !file_existed,
         }
     }
 
@@ -122,6 +127,14 @@ fn scan_repos(
     state: &mut GitScanState,
     tx: &tokio_mpsc::Sender<CanonicalEvent>,
 ) -> usize {
+    if state.bootstrap {
+        bootstrap_cursors(repos, state);
+        state.bootstrap = false;
+        state.save_if_dirty();
+        info!("git collector: initialized cursors (skipping historical backfill on first run)");
+        return 0;
+    }
+
     let mut emitted = 0usize;
     for repo in repos {
         let key = repo.to_string_lossy().to_string();
@@ -146,6 +159,37 @@ fn scan_repos(
         }
     }
     emitted
+}
+
+fn bootstrap_cursors(repos: &[PathBuf], state: &mut GitScanState) {
+    for repo in repos {
+        let logs_root = repo.join(".git").join("logs");
+        if !logs_root.is_dir() {
+            continue;
+        }
+        let mut files = Vec::new();
+        collect_reflog_files(&logs_root, &mut files);
+        let head = repo.join(".git").join("HEAD");
+        if head.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&head) {
+                let key = head.to_string_lossy().to_string();
+                state.head_content.insert(key, content);
+                state.dirty = true;
+            }
+        }
+        for path in files {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let count = content
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .count();
+                let key = path.to_string_lossy().to_string();
+                state.line_counts.insert(key, count);
+                state.dirty = true;
+            }
+        }
+    }
 }
 
 fn collect_reflog_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -205,9 +249,11 @@ fn scan_reflog_file(
     let cutoff = now_ms - BACKFILL_WINDOW_MS;
 
     let mut emitted = 0usize;
+    let mut backfill_budget = BACKFILL_MAX_LINES;
     for (idx, line) in lines.iter().enumerate() {
         let is_new = idx >= prev_count;
-        let in_backfill = prev_count == 0
+        let in_backfill = prev_count > 0
+            && backfill_budget > 0
             && is_backfill_candidate(&rel)
             && parse_reflog_timestamp_ms(line).is_some_and(|ts| ts >= cutoff);
         if !is_new && !in_backfill {
@@ -220,6 +266,9 @@ fn scan_reflog_file(
                 return emitted;
             }
             emitted += 1;
+            if in_backfill {
+                backfill_budget -= 1;
+            }
         }
     }
 
@@ -311,10 +360,7 @@ fn parse_head_pointer(path: &Path, content: &str) -> Option<CanonicalEvent> {
 }
 
 fn is_backfill_candidate(rel: &str) -> bool {
-    rel == "HEAD"
-        || rel == "refs/heads/master"
-        || rel == "refs/heads/main"
-        || rel.starts_with("refs/remotes/origin/")
+    rel == "HEAD" || rel == "refs/heads/master" || rel == "refs/heads/main"
 }
 
 fn classify_git_event(rel: &str, message: &str) -> Option<&'static str> {

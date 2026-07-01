@@ -194,6 +194,12 @@ fn score_event(event: &CanonicalEvent) -> i32 {
     }
     let mut score = 1;
     if event.category == chronicle_core::EventCategory::Git {
+        if matches!(
+            event.r#type.as_str(),
+            "fetch.completed" | "pull.completed" | "branch.checkout"
+        ) {
+            return 0;
+        }
         score += 20;
     }
     if event.category == chronicle_core::EventCategory::Ide {

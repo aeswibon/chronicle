@@ -14,6 +14,8 @@
     formatDateTime,
     formatDuration,
     formatTime,
+    formatPathMiddle,
+    isSpanActive,
   } from '$lib/format.js';
 
   let projectName = $derived(decodeURIComponent($page.params.name ?? ''));
@@ -61,7 +63,7 @@
 
 <PageShell
   title={projectName}
-  description={project?.path ?? 'Project activity and sessions.'}
+  description={project ? formatPathMiddle(project.path, 64) : 'Project activity and sessions.'}
 >
   <div class="mb-6">
     <a href="/projects" class="text-xs text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors">
@@ -81,7 +83,9 @@
         <ProjectIcon name={project.name} path={project.path} size={44} {iconUrl} />
         <div class="min-w-0">
           <p class="text-sm font-medium text-[var(--text)]">{project.name}</p>
-          <p class="text-xs text-[var(--text-muted)] font-mono truncate mt-0.5">{project.path}</p>
+          <p class="text-xs text-[var(--text-muted)] font-mono truncate mt-0.5" title={project.path}>
+            {formatPathMiddle(project.path, 64)}
+          </p>
           <p class="text-xs text-[var(--text-muted)] mt-1">Last active {formatDateTime(project.last_active)}</p>
         </div>
       </div>
@@ -98,7 +102,11 @@
             >
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2.5">
-                  <span class="w-1.5 h-1.5 rounded-full bg-[var(--accent)] shrink-0"></span>
+                  <span
+                    class="w-1.5 h-1.5 rounded-full shrink-0"
+                    class:bg-[var(--accent)]={isSpanActive(span)}
+                    class:bg-[var(--text-muted)]={!isSpanActive(span)}
+                  ></span>
                   <span class="text-sm font-medium text-[var(--text)] capitalize">{span.span_type}</span>
                   <span class="text-xs text-[var(--text-muted)]">{formatDuration(span.duration_ms)}</span>
                 </div>

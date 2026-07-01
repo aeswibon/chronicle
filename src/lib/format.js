@@ -62,6 +62,37 @@ function truncate(text, max = 72) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+/** Middle-ellipsis for long filesystem paths. */
+export function formatPathMiddle(path, max = 52) {
+  if (!path) return '';
+  if (path.length <= max) return path;
+  const head = Math.ceil((max - 1) / 2);
+  const tail = Math.floor((max - 1) / 2);
+  return `${path.slice(0, head)}…${path.slice(-tail)}`;
+}
+
+/** Active span = no end time and started within the session timeout window. */
+export function isSpanActive(span, now = Date.now()) {
+  if (span.ended_at != null && span.ended_at !== undefined) return false;
+  const started = /** @type {number} */ (span.started_at ?? 0);
+  return now - started < 15 * 60 * 1000;
+}
+
+/** Nav highlight — Timeline is default; Sessions includes detail routes. */
+export function isNavActive(pathname, href) {
+  const path = pathname || '/';
+  if (href === '/') {
+    return path === '/' || path === '' || path.endsWith('/index.html');
+  }
+  if (href === '/sessions') {
+    return path === '/sessions' || path.startsWith('/sessions/');
+  }
+  if (href === '/projects') {
+    return path === '/projects' || path.startsWith('/projects/');
+  }
+  return path === href;
+}
+
 /** @param {string | undefined} path */
 function basename(path) {
   if (!path) return '';
@@ -93,6 +124,7 @@ export function eventLabel(event) {
   const category = event.category;
   const type = /** @type {string} */ (event.type ?? '');
 
+  if (meta.report_line) return truncate(meta.report_line, 72);
   if (meta.app_name) return meta.app_name;
   if (category === 'shell' && meta.command) return truncate(meta.command, 56);
   if (category === 'filesystem' && meta.path) return basename(meta.path);

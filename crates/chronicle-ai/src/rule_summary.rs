@@ -25,8 +25,16 @@ pub fn daily_summary(since: i64, spans: &[Span], events: &[CanonicalEvent]) -> S
         }
     }
 
-    let mut project_names: Vec<_> = projects.keys().cloned().collect();
-    project_names.sort();
+    let mut project_names: Vec<_> = projects
+        .into_iter()
+        .map(|(name, count)| (name, count))
+        .collect();
+    project_names.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let project_names: Vec<String> = project_names
+        .into_iter()
+        .take(5)
+        .map(|(name, _)| name)
+        .collect();
 
     let git_events: Vec<_> = meaningful
         .iter()
@@ -102,7 +110,16 @@ pub fn daily_summary(since: i64, spans: &[Span], events: &[CanonicalEvent]) -> S
 
     let labels = collect_activity_labels(spans, &meaningful);
     if !labels.is_empty() {
-        sentences.push(format!("Work themes: {}.", labels.join(", ")));
+        let capped: Vec<_> = labels.into_iter().take(6).collect();
+        sentences.push(format!("Work themes: {}.", capped.join(", ")));
+    }
+
+    if meaningful.len() > 400 {
+        sentences.push(format!(
+            "Captured {} high-signal events ({} total in store for this day).",
+            meaningful.len(),
+            events.len()
+        ));
     }
 
     if !meaningful_failures.is_empty() {

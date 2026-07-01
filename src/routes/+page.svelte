@@ -12,6 +12,7 @@
     formatDuration,
     activityLabel,
     spanActivityLabels,
+    isSpanActive,
   } from '$lib/format.js';
   import AppIcon from '$lib/components/AppIcon.svelte';
 
@@ -83,7 +84,11 @@
             >
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2.5">
-                  <span class="w-1.5 h-1.5 rounded-full bg-[var(--accent)] shrink-0"></span>
+                  <span
+                    class="w-1.5 h-1.5 rounded-full shrink-0"
+                    class:bg-[var(--accent)]={isSpanActive(span)}
+                    class:bg-[var(--text-muted)]={!isSpanActive(span)}
+                  ></span>
                   <span class="text-sm font-medium text-[var(--text)] capitalize">{span.span_type}</span>
                   {#each spanActivityLabels(span) as label}
                     <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--accent-muted)] text-[var(--accent)]">{label}</span>

@@ -409,7 +409,7 @@ async fn handle_connection(
                             .unwrap_or(since + 86_400_000);
                         let ai_cfg = chronicle_config::load().ai;
                         match store.query_spans(since, Some(until), 200) {
-                            Ok(spans) => match store.query_activity_events(since, Some(until), 500)
+                            Ok(spans) => match store.query_activity_events(since, Some(until), 250)
                             {
                                 Ok(events) => {
                                     let (summary, source) = chronicle_ai::summarize_day(

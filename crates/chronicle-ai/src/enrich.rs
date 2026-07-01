@@ -152,7 +152,12 @@ fn build_report_line(
                 .and_then(|v| v.as_str())
                 .map(|t| format!(" — {t}"))
                 .unwrap_or_default();
-            format!("Focused {app}{title}{project}")
+            let agent = is_agent_app_name(app);
+            if agent {
+                format!("Agent session in {app}{title}{project}")
+            } else {
+                format!("Focused {app}{title}{project}")
+            }
         }
         EventCategory::Ide => {
             let file = event
@@ -192,6 +197,13 @@ fn build_report_line(
 
 fn file_basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
+fn is_agent_app_name(app: &str) -> bool {
+    let lower = app.to_lowercase();
+    ["cursor", "claude", "codex", "gemini", "windsurf", "copilot", "aider", "opencode"]
+        .iter()
+        .any(|n| lower.contains(n))
 }
 
 #[cfg(test)]

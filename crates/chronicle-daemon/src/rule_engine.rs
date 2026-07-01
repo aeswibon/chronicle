@@ -62,6 +62,9 @@ impl RuleEngine {
         } else if singles.contains(&"commit") {
             compound.push("commit workflow");
         }
+        if singles.contains(&"agent session") {
+            compound.push("agent session");
+        }
 
         if compound.is_empty() {
             singles.into_iter().collect()
@@ -92,8 +95,48 @@ fn single_event_label(event: &CanonicalEvent) -> Option<&'static str> {
         EventCategory::Git => git_label(event),
         EventCategory::Ide => ide_label(event),
         EventCategory::Browser => browser_label(event),
+        EventCategory::Os => os_label(event),
         EventCategory::Build => Some("build"),
         _ => None,
+    }
+}
+
+fn os_label(event: &CanonicalEvent) -> Option<&'static str> {
+    if event.r#type != "process.focus" {
+        return None;
+    }
+    let app = event
+        .metadata
+        .get("app_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&event.source)
+        .to_lowercase();
+    let bundle = event
+        .metadata
+        .get("bundle_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if app.contains("cursor")
+        || app.contains("claude")
+        || app.contains("codex")
+        || app.contains("gemini")
+        || app.contains("windsurf")
+        || bundle.contains("cursor")
+        || bundle.contains("anthropic")
+    {
+        Some("agent session")
+    } else if app.contains("terminal")
+        || app.contains("iterm")
+        || app.contains("warp")
+        || app.contains("ghostty")
+        || app.contains("alacritty")
+    {
+        Some("terminal")
+    } else if app.contains("code") || app.contains("xcode") || app.contains("intellij") {
+        Some("coding")
+    } else {
+        Some("focus")
     }
 }
 
@@ -127,8 +170,7 @@ fn git_label(event: &CanonicalEvent) -> Option<&'static str> {
         "branch.checkout" => Some("branch switch"),
         "rebase.completed" => Some("rebase"),
         "push.completed" => Some("push"),
-        "pull.completed" => Some("pull"),
-        "fetch.completed" => Some("fetch"),
+        "pull.completed" | "fetch.completed" => None,
         _ => None,
     }
 }

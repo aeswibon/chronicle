@@ -4,6 +4,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { theme, initTheme, toggleTheme } from '$lib/theme.svelte.js';
+  import { isNavActive } from '$lib/format.js';
 
   let { children } = $props();
   let daemonConnected = $state(false);
@@ -52,12 +53,12 @@
         <a
           href={item.href}
           class="relative flex items-center h-full px-3 text-xs font-medium transition-colors"
-          class:text-[var(--accent)]={$page.url.pathname === item.href}
-          class:text-[var(--text-muted)]={$page.url.pathname !== item.href}
-          class:hover:text-[var(--text-secondary)]={$page.url.pathname !== item.href}
+          class:text-[var(--accent)]={isNavActive($page.url.pathname, item.href)}
+          class:text-[var(--text-muted)]={!isNavActive($page.url.pathname, item.href)}
+          class:hover:text-[var(--text-secondary)]={!isNavActive($page.url.pathname, item.href)}
         >
           {item.label}
-          {#if $page.url.pathname === item.href}
+          {#if isNavActive($page.url.pathname, item.href)}
             <span class="absolute bottom-0 left-1/2 -translate-x-1/2 w-6 h-[2px] bg-[var(--accent)] rounded-full"></span>
           {/if}
         </a>
