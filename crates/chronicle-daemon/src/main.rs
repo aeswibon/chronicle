@@ -86,9 +86,9 @@ async fn install_launchd(cli_watch: &[String]) -> anyhow::Result<()> {
 
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
     let plist_path = home.join("Library/LaunchAgents/com.chronicle.daemon.plist");
-    let daemon_path = std::env::current_exe()?.canonicalize().unwrap_or_else(|_| {
-        std::env::current_exe().expect("current_exe")
-    });
+    let daemon_path = std::env::current_exe()?
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::current_exe().expect("current_exe"));
     let store_path = chronicle_config::default_store_path();
     let socket_path = chronicle_config::default_socket_path();
     let log_dir = home.join("Library/Logs");
