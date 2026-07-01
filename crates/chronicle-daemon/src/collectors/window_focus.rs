@@ -1,246 +1,114 @@
-use chronicle_core::{CanonicalEvent, EventCategory};
+use chronicle_core::CanonicalEvent;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
-use crate::event_filter;
-use crate::project;
+use crate::capture_status::CaptureStatus;
+use crate::focus_emit::FocusEmitter;
 
-use super::macos_window;
+use super::macos_focus::{self, CapturePermissions, FocusSample};
 
-const POLL_INTERVAL: Duration = Duration::from_secs(2);
+const RESTART_DELAY: Duration = Duration::from_secs(2);
 
-struct FocusSnapshot {
-    app: String,
-    window: Option<String>,
+pub struct WindowFocusCollector {
+    capture_status: Arc<CaptureStatus>,
 }
 
-pub struct WindowFocusCollector;
-
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 impl WindowFocusCollector {
-    pub async fn run(self, tx: mpsc::Sender<CanonicalEvent>) {
-        debug!("window_focus collector started (polling every 2s)");
-        let mut last: Option<FocusSnapshot> = None;
+    pub fn new(capture_status: Arc<CaptureStatus>) -> Self {
+        Self { capture_status }
+    }
+
+    pub async fn run(
+        self,
+        tx: mpsc::Sender<CanonicalEvent>,
+        focus: Arc<crate::focus_context::FocusContext>,
+    ) {
+        info!("window_focus collector started (NSWorkspace + AX/CGWindow monitor)");
+        let mut emitter = FocusEmitter::default();
+        loop {
+            match self.run_monitor_session(&tx, &focus, &mut emitter).await {
+                Ok(()) => warn!("focus monitor exited, restarting in {:?}", RESTART_DELAY),
+                Err(e) => debug!("focus monitor session ended: {e}"),
+            }
+            self.capture_status.set_monitor_running(false);
+            emitter.reset();
+            tokio::time::sleep(RESTART_DELAY).await;
+            if let Ok(Some(sample)) = tokio::task::spawn_blocking(macos_focus::query_snapshot).await
+            {
+                handle_sample(&tx, &focus, &mut emitter, &sample).await;
+            }
+        }
+    }
+
+    async fn run_monitor_session(
+        &self,
+        tx: &mpsc::Sender<CanonicalEvent>,
+        focus: &Arc<crate::focus_context::FocusContext>,
+        emitter: &mut FocusEmitter,
+    ) -> Result<(), String> {
+        let mut child = macos_focus::spawn_monitor()
+            .await
+            .ok_or("focus monitor helper unavailable")?;
+        self.capture_status.set_monitor_running(true);
+        let stdout = child.stdout.take().ok_or("focus monitor missing stdout")?;
+        let mut reader = BufReader::new(stdout).lines();
 
         loop {
-            tokio::time::sleep(POLL_INTERVAL).await;
-            let info = match tokio::task::spawn_blocking(get_frontmost_app_sync).await {
-                Ok(Ok(info)) => info,
-                Ok(Err(e)) => {
-                    debug!("window_focus: {e}");
-                    continue;
+            tokio::select! {
+                line = reader.next_line() => {
+                    let line = line.map_err(|e| format!("read monitor stdout: {e}"))?;
+                    let Some(line) = line else { break; };
+                    let Some(sample) = macos_focus::parse_sample_line(line.as_bytes()) else { continue; };
+                    let perms = CapturePermissions {
+                        accessibility_trusted: sample.accessibility_trusted,
+                        screen_capture_granted: sample.screen_capture_granted,
+                        can_read_window_titles: sample.accessibility_trusted || sample.screen_capture_granted,
+                    };
+                    self.capture_status.update_from_sample(
+                        &sample.name,
+                        &sample.title_source,
+                        &perms,
+                        true,
+                    );
+                    handle_sample(tx, focus, emitter, &sample).await;
                 }
-                Err(e) => {
-                    debug!("window_focus join: {e}");
-                    continue;
-                }
-            };
-
-            let app_key = info.name.to_lowercase();
-            let window_title = info.window_title.clone();
-            let changed = match &last {
-                None => true,
-                Some(prev) => prev.app != app_key || prev.window != window_title,
-            };
-            if !changed {
-                continue;
-            }
-
-            let app_changed = last.as_ref().is_none_or(|prev| prev.app != app_key);
-            let event_type = if app_changed {
-                "process.focus"
-            } else {
-                "window.focus"
-            };
-
-            let mut event = CanonicalEvent::new(&info.name, EventCategory::Os, event_type);
-
-            if let Some(title) = window_title.as_deref() {
-                if let Some((project, root)) = project::detect_project_from_title(title) {
-                    event = event.with_project(&project);
-                    let meta = event.metadata.as_object_mut().unwrap();
-                    meta.insert("project_path".into(), root.to_string_lossy().into());
+                status = child.wait() => {
+                    let _ = status.map_err(|e| format!("wait monitor: {e}"))?;
+                    break;
                 }
             }
-
-            let meta = event.metadata.as_object_mut().unwrap();
-            meta.insert("app_name".into(), info.name.clone().into());
-            meta.insert("bundle_id".into(), info.bundle_id.clone().into());
-            meta.insert("pid".into(), info.pid.into());
-            if let Some(title) = window_title {
-                meta.insert("window_title".into(), title.into());
-            }
-
-            if !event_filter::should_record(&event) {
-                last = Some(FocusSnapshot {
-                    app: app_key,
-                    window: event
-                        .metadata
-                        .get("window_title")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string),
-                });
-                continue;
-            }
-
-            let saved_window = event
-                .metadata
-                .get("window_title")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
-            if tx.send(event).await.is_err() {
-                warn!("window_focus: receiver dropped");
-                return;
-            }
-            last = Some(FocusSnapshot {
-                app: app_key,
-                window: saved_window,
-            });
         }
+        Ok(())
     }
 }
 
-struct AppInfo {
-    name: String,
-    bundle_id: String,
-    pid: i32,
-    window_title: Option<String>,
-}
-
-fn get_frontmost_app_sync() -> Result<AppInfo, String> {
-    #[cfg(target_os = "macos")]
-    {
-        get_frontmost_app_macos()
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        Err("window_focus collector is only supported on macOS".into())
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn get_frontmost_app_macos() -> Result<AppInfo, String> {
-    use lsappinfo_parse::{parse_front_asn, parse_lsappinfo_field, parse_lsappinfo_pid};
-
-    let front = std::process::Command::new("/usr/bin/lsappinfo")
-        .arg("front")
-        .output()
-        .map_err(|e| format!("lsappinfo front: {e}"))?;
-    if !front.status.success() {
-        return Err(format!(
-            "lsappinfo front: {}",
-            String::from_utf8_lossy(&front.stderr)
-        ));
-    }
-
-    let asn = parse_front_asn(&String::from_utf8_lossy(&front.stdout))
-        .ok_or_else(|| "lsappinfo front: could not parse ASN".to_string())?;
-
-    let info = std::process::Command::new("/usr/bin/lsappinfo")
-        .args(["info", "-only", "name,bundleID,pid", &asn])
-        .output()
-        .map_err(|e| format!("lsappinfo info: {e}"))?;
-    if !info.status.success() {
-        return Err(format!(
-            "lsappinfo info: {}",
-            String::from_utf8_lossy(&info.stderr)
-        ));
-    }
-
-    let stdout = String::from_utf8_lossy(&info.stdout);
-    let name = parse_lsappinfo_field(&stdout, "LSDisplayName")
-        .ok_or_else(|| "lsappinfo: missing app name".to_string())?;
-    let bundle_id = parse_lsappinfo_field(&stdout, "CFBundleIdentifier").unwrap_or_default();
-    let pid = parse_lsappinfo_pid(&stdout).unwrap_or(0);
-    let window_title = macos_window::window_title_for_pid(pid);
-
-    Ok(AppInfo {
-        name,
-        bundle_id,
-        pid,
-        window_title,
-    })
-}
-
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-mod lsappinfo_parse {
-    pub fn parse_front_asn(stdout: &str) -> Option<String> {
-        for line in stdout.lines() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("ASN:") {
-                let asn = format!("ASN:{rest}");
-                return Some(asn.trim_end_matches(':').to_string());
-            }
-        }
-        None
-    }
-
-    pub fn parse_lsappinfo_field(stdout: &str, key: &str) -> Option<String> {
-        let needle = format!("\"{key}\"=");
-        for line in stdout.lines() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix(&needle) {
-                return parse_quoted_value(rest);
-            }
-        }
-        None
-    }
-
-    pub fn parse_lsappinfo_pid(stdout: &str) -> Option<i32> {
-        for line in stdout.lines() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("\"pid\"=") {
-                return rest.trim().parse().ok();
-            }
-            if let Some(rest) = trimmed.strip_prefix("pid = ") {
-                return rest.split_whitespace().next()?.parse().ok();
-            }
-        }
-        None
-    }
-
-    fn parse_quoted_value(raw: &str) -> Option<String> {
-        let raw = raw.trim();
-        if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
-            return Some(raw[1..raw.len() - 1].to_string());
-        }
-        if raw == "[ NULL ]" || raw.is_empty() {
-            return None;
-        }
-        Some(raw.to_string())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::lsappinfo_parse::{parse_front_asn, parse_lsappinfo_field, parse_lsappinfo_pid};
-
-    #[test]
-    fn parse_front_asn_from_lsappinfo_output() {
-        let sample = "ASN:0x0-0x9c89c8:\n\"Safari\" ASN:0x0-0x9c89c8: (in front)\n";
-        assert_eq!(
-            parse_front_asn(sample),
-            Some("ASN:0x0-0x9c89c8".to_string())
-        );
-    }
-
-    #[test]
-    fn parse_lsappinfo_name_and_bundle() {
-        let sample = "\"LSDisplayName\"=\"Safari\"\n\"CFBundleIdentifier\"=\"com.apple.Safari\"\n";
-        assert_eq!(
-            parse_lsappinfo_field(sample, "LSDisplayName"),
-            Some("Safari".to_string())
-        );
-        assert_eq!(
-            parse_lsappinfo_field(sample, "CFBundleIdentifier"),
-            Some("com.apple.Safari".to_string())
-        );
-    }
-
-    #[test]
-    fn parse_lsappinfo_pid_field() {
-        let sample = "\"pid\"=3706\n\"LSDisplayName\"=\"Ghostty\"\n";
-        assert_eq!(parse_lsappinfo_pid(sample), Some(3706));
-    }
+async fn handle_sample(
+    tx: &mpsc::Sender<CanonicalEvent>,
+    focus: &Arc<crate::focus_context::FocusContext>,
+    emitter: &mut FocusEmitter,
+    sample: &FocusSample,
+) {
+    emitter.update_focus_context(
+        focus,
+        &sample.name,
+        &sample.bundle_id,
+        sample.pid,
+        sample.window_title.clone(),
+    );
+    let Some(event) = emitter.sample_to_event(
+        &sample.name,
+        &sample.bundle_id,
+        sample.pid,
+        sample.window_title.clone(),
+        &sample.title_source,
+        sample.timestamp_ms,
+        None,
+    ) else {
+        return;
+    };
+    let _ = tx.send(event).await;
 }

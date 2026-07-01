@@ -96,7 +96,37 @@ fn redact_command_secrets(cmd: &str) -> String {
     out
 }
 
+/// Apps that should not replace the tracked work focus (Chronicle UI, Finder, etc.).
+pub fn is_transient_focus_app(app_name: &str, bundle_id: &str) -> bool {
+    let app_lower = app_name.to_lowercase();
+    let bundle_lower = bundle_id.to_lowercase();
+    const IGNORED_APPS: &[&str] = &[
+        "chronicle-ui",
+        "chronicle",
+        "system settings",
+        "notification",
+        "usernotification",
+        "control centre",
+        "control center",
+        "windowmanager",
+        "loginwindow",
+        "dock",
+        "systemuiserver",
+        "coreservicesuiagent",
+        "spotlight",
+        "backgroundtaskmanagement",
+        "universalaccess",
+    ];
+    IGNORED_APPS
+        .iter()
+        .any(|ignored| app_lower.contains(ignored) || bundle_lower.contains(ignored))
+}
+
 fn should_record_focus(event: &CanonicalEvent) -> bool {
+    // Tab switches are process.focus only; window.focus was per-title noise.
+    if event.r#type == "window.focus" {
+        return false;
+    }
     if event.r#type != "process.focus" && event.r#type != "window.focus" {
         return true;
     }
@@ -107,20 +137,12 @@ fn should_record_focus(event: &CanonicalEvent) -> bool {
         .and_then(|v| v.as_str())
         .unwrap_or(&event.source);
 
-    let app_lower = app.to_lowercase();
-    const IGNORED_APPS: &[&str] = &[
-        "chronicle-ui",
-        "chronicle",
-        "system settings",
-        "notification centre",
-        "control centre",
-        "windowmanager",
-        "loginwindow",
-        "dock",
-        "systemuiserver",
-    ];
+    let bundle = meta
+        .and_then(|m| m.get("bundle_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
-    !IGNORED_APPS.iter().any(|ignored| app_lower == *ignored)
+    !is_transient_focus_app(app, bundle)
 }
 
 fn should_record_shell(event: &CanonicalEvent) -> bool {
@@ -204,6 +226,13 @@ mod tests {
     use chronicle_core::CanonicalEvent;
 
     #[test]
+    fn skips_usernotificationcenter_focus() {
+        let mut event =
+            CanonicalEvent::new("usernotificationcenter", EventCategory::Os, "process.focus");
+        event.metadata = serde_json::json!({"app_name": "usernotificationcenter"});
+        assert!(!should_record(&event));
+    }
+
     fn skips_chronicle_focus() {
         let mut event = CanonicalEvent::new("chronicle-ui", EventCategory::Os, "process.focus");
         event.metadata = serde_json::json!({"app_name": "chronicle-ui"});

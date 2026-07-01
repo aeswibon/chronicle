@@ -8,6 +8,18 @@ use chronicle_core::Span;
 pub use chronicle_core::{CanonicalEvent, ProjectRecord};
 use serde::{Deserialize, Serialize};
 
+/// macOS window/focus capture health (NSWorkspace + TCC).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct MacosCaptureStatus {
+    pub monitor_running: bool,
+    pub frontmost_app: Option<String>,
+    pub title_source: Option<String>,
+    pub accessibility_trusted: bool,
+    pub screen_capture_granted: bool,
+    pub can_read_window_titles: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DaemonRequest {
@@ -53,6 +65,7 @@ pub enum DaemonRequest {
         until: Option<i64>,
     },
     PruneNoiseEvents,
+    PurgeCaptureTimeline,
     ListPlugins,
     GetConfig,
     SetConfig {
@@ -72,6 +85,7 @@ pub enum DaemonRequest {
         event_limit: u32,
     },
     GetStatus,
+    RequestMacosAccessibility,
     EmitEvent {
         event: CanonicalEvent,
     },
@@ -118,6 +132,11 @@ pub enum DaemonResponse {
         uptime_secs: u64,
         events_count: u64,
         version: String,
+        #[serde(default)]
+        macos_capture: Option<MacosCaptureStatus>,
+    },
+    MacosCapture {
+        status: MacosCaptureStatus,
     },
     Ack {
         event_id: String,
@@ -136,6 +155,10 @@ pub enum DaemonResponse {
     },
     MaintenanceResult {
         events_deleted: usize,
+        #[serde(default)]
+        spans_deleted: usize,
+        #[serde(default)]
+        sessions_deleted: usize,
     },
     Error {
         code: u32,
@@ -169,6 +192,7 @@ mod tests {
                         uptime_secs: 42,
                         events_count: 100,
                         version: "0.1.0".into(),
+                        macos_capture: None,
                     })
                     .await
                     .unwrap();
@@ -185,6 +209,7 @@ mod tests {
                 uptime_secs,
                 events_count,
                 version,
+                macos_capture: _,
             } => {
                 assert_eq!(uptime_secs, 42);
                 assert_eq!(events_count, 100);

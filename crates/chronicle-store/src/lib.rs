@@ -588,6 +588,15 @@ impl Store {
         Ok(git_deleted + shell_deleted)
     }
 
+    /// Wipe all captured events, spans, and session rollups (fresh capture).
+    pub fn purge_capture_timeline(&self) -> SqlResult<(usize, usize, usize)> {
+        let events = self.conn.execute("DELETE FROM events", [])?;
+        let spans = self.conn.execute("DELETE FROM spans", [])?;
+        let sessions = self.conn.execute("DELETE FROM sessions", [])?;
+        let _ = self.conn.execute("VACUUM", []);
+        Ok((events, spans, sessions))
+    }
+
     /// Remove events and spans older than `cutoff_ms`. Returns (events_deleted, spans_deleted).
     pub fn prune_before(&self, cutoff_ms: i64) -> SqlResult<(usize, usize)> {
         let events = self.conn.execute(

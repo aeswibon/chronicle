@@ -1,11 +1,14 @@
+use crate::capture_status::CaptureStatus;
 use crate::collectors;
 use crate::event_filter;
+use crate::focus_context::{self, FocusContext};
 use crate::maintenance;
 use crate::project;
 use crate::span_processor::SpanProcessor;
-use chronicle_core::CanonicalEvent;
+use chronicle_core::{CanonicalEvent, Span, SpanType};
 use chronicle_ipc::{DaemonRequest, DaemonResponse, Server};
 use chronicle_store::Store;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -14,6 +17,57 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::broadcast;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
+
+struct PipelineState {
+    span_processor: SpanProcessor,
+    rule_engine: crate::rule_engine::RuleEngine,
+}
+
+impl PipelineState {
+    fn new() -> Self {
+        Self {
+            span_processor: SpanProcessor::new(),
+            rule_engine: crate::rule_engine::RuleEngine::new(),
+        }
+    }
+
+    fn annotate_active_spans(&self, spans: &mut [Span]) {
+        for span in spans.iter_mut() {
+            self.rule_engine.annotate_span(span);
+        }
+    }
+}
+
+fn supplement_active_spans(active: &mut Vec<Span>, focus_ctx: &FocusContext) {
+    if !active.is_empty() {
+        return;
+    }
+    if let Some(snap) = focus_ctx.snapshot() {
+        if let Some(span) = focus_context::open_span_from_focus(&snap) {
+            active.push(span);
+        }
+    }
+}
+
+fn merge_timeline_spans(
+    mut stored: Vec<Span>,
+    active: Vec<Span>,
+    since: i64,
+    limit: u32,
+) -> Vec<Span> {
+    let active_ids: HashSet<_> = active.iter().map(|s| s.id).collect();
+    stored.retain(|s| !active_ids.contains(&s.id));
+    let mut all: Vec<Span> = active
+        .into_iter()
+        .chain(stored)
+        .filter(|s| {
+            s.started_at >= since && (s.ended_at.is_none() || s.span_type != SpanType::Idle)
+        })
+        .collect();
+    all.sort_by_key(|b| std::cmp::Reverse(b.started_at));
+    all.truncate(limit as usize);
+    all
+}
 
 pub struct Daemon {
     socket_path: String,
@@ -72,6 +126,16 @@ impl Daemon {
         let started_at = Instant::now();
         let event_counter = Arc::new(AtomicU64::new(0));
 
+        let focus_ctx = Arc::new(FocusContext::default());
+        let capture_status = Arc::new(CaptureStatus::default());
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(perms) = collectors::macos_focus::query_permissions() {
+                capture_status.seed_permissions(perms);
+            }
+        }
+        let pipeline = Arc::new(Mutex::new(PipelineState::new()));
+        let capture_status_ipc = capture_status.clone();
         let (event_tx, event_rx) = mpsc::channel::<CanonicalEvent>(1024);
         let (broadcast_tx, _) = broadcast::channel::<CanonicalEvent>(256);
 
@@ -83,17 +147,30 @@ impl Daemon {
         let store_persist = store.clone();
         let counter = event_counter.clone();
         let broadcast_tx_clone = broadcast_tx.clone();
+        let pipeline_events = pipeline.clone();
+        let focus_ctx_events = focus_ctx.clone();
         tokio::spawn(async move {
-            process_events(event_rx, store_persist, counter, broadcast_tx_clone).await;
+            process_events(
+                event_rx,
+                store_persist,
+                counter,
+                broadcast_tx_clone,
+                pipeline_events,
+                focus_ctx_events,
+            )
+            .await;
         });
 
         let collector_cfg = chronicle_config::load().collectors;
 
         let mut collectors: Vec<collectors::Collector> = Vec::new();
         if collector_cfg.window_focus {
+            #[cfg(not(target_os = "macos"))]
             collectors.push(collectors::Collector::WindowFocus(
-                collectors::window_focus::WindowFocusCollector,
+                collectors::window_focus::WindowFocusCollector::new(capture_status.clone()),
             ));
+            #[cfg(target_os = "macos")]
+            info!("window focus on macOS is relayed by Chronicle.app (GUI session); git/shell/filesystem still run here");
         }
         if collector_cfg.filesystem {
             collectors.push(collectors::Collector::Filesystem(
@@ -119,8 +196,9 @@ impl Daemon {
 
         for collector in collectors {
             let tx = event_tx.clone();
+            let focus = focus_ctx.clone();
             tokio::spawn(async move {
-                collector.run(tx).await;
+                collector.run(tx, focus).await;
             });
         }
 
@@ -174,6 +252,9 @@ impl Daemon {
                             let started = started_at;
                             let broadcast_rx = broadcast_tx.subscribe();
                             let event_tx_conn = event_tx.clone();
+                            let pipeline_conn = pipeline.clone();
+                            let focus_conn = focus_ctx.clone();
+                            let capture_conn = capture_status_ipc.clone();
                             tokio::spawn(async move {
                                 handle_connection(
                                     &mut conn,
@@ -182,6 +263,9 @@ impl Daemon {
                                     started,
                                     broadcast_rx,
                                     event_tx_conn,
+                                    pipeline_conn,
+                                    focus_conn,
+                                    capture_conn,
                                 )
                                 .await;
                             });
@@ -205,34 +289,66 @@ async fn process_events(
     store: Arc<Mutex<Store>>,
     counter: Arc<AtomicU64>,
     broadcast_tx: broadcast::Sender<CanonicalEvent>,
+    pipeline: Arc<Mutex<PipelineState>>,
+    focus_ctx: Arc<FocusContext>,
 ) {
-    let mut span_processor = SpanProcessor::new();
-    let mut rule_engine = crate::rule_engine::RuleEngine::new();
-
     while let Some(mut event) = rx.recv().await {
         event_filter::sanitize_event(&mut event);
         if !event_filter::should_record(&event) {
             continue;
         }
 
-        rule_engine.process(&mut event);
-        chronicle_ai::enrich_event(&mut event);
+        if event.category == chronicle_core::EventCategory::Os && event.r#type == "process.focus" {
+            crate::focus_emit::ensure_tab_session_meta(&mut event);
+        }
 
+        focus_ctx.update_from_event(&event);
+        let focus = focus_ctx.snapshot();
+        if !focus_context::applies_to_focus(&event, focus.as_ref()) {
+            continue;
+        }
+
+        let mut closed_spans = Vec::new();
+        if event.category == chronicle_core::EventCategory::Os
+            && event.r#type == "process.focus"
+            && event.metadata.get("focus_kind").and_then(|v| v.as_str()) == Some("app")
         {
-            let guard = store.lock().await;
-            if let Err(e) = guard.insert_event(&event) {
-                error!("persist event: {e}");
-            } else if let Some(ref name) = event.project {
-                if let Some(path) = project::project_path_from_event(name, &event.metadata) {
-                    if let Err(e) = guard.upsert_project(name, &path, None, event.timestamp) {
-                        error!("upsert project: {e}");
+            let mut guard = pipeline.lock().await;
+            closed_spans = guard.span_processor.close_all(event.timestamp);
+            drop(guard);
+        }
+
+        let closed_span = {
+            let mut guard = pipeline.lock().await;
+            guard.rule_engine.process(&mut event);
+            chronicle_ai::enrich_event(&mut event);
+
+            {
+                let store_guard = store.lock().await;
+                if let Err(e) = store_guard.insert_event(&event) {
+                    error!("persist event: {e}");
+                } else if let Some(ref name) = event.project {
+                    if let Some(path) = project::project_path_from_event(name, &event.metadata) {
+                        if let Err(e) =
+                            store_guard.upsert_project(name, &path, None, event.timestamp)
+                        {
+                            error!("upsert project: {e}");
+                        }
                     }
                 }
             }
+
+            guard.span_processor.process(&event)
+        };
+
+        if let Some(span) = closed_span {
+            closed_spans.push(span);
         }
 
-        if let Some(mut span) = span_processor.process(&event) {
-            rule_engine.annotate_span(&mut span);
+        for mut span in closed_spans {
+            let guard = pipeline.lock().await;
+            guard.rule_engine.annotate_span(&mut span);
+            drop(guard);
             if let Err(e) = store.lock().await.insert_span(&span) {
                 error!("persist span: {e}");
             }
@@ -249,6 +365,7 @@ async fn process_events(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_connection(
     conn: &mut chronicle_ipc::Connection,
     store: &Arc<Mutex<Store>>,
@@ -256,6 +373,9 @@ async fn handle_connection(
     started: Instant,
     mut broadcast_rx: broadcast::Receiver<CanonicalEvent>,
     event_tx: mpsc::Sender<CanonicalEvent>,
+    pipeline: Arc<Mutex<PipelineState>>,
+    focus_ctx: Arc<FocusContext>,
+    capture_status: Arc<CaptureStatus>,
 ) {
     match conn.read_request().await {
         Ok(req) => match req {
@@ -299,10 +419,26 @@ async fn handle_connection(
                         match guard.prune_noise_events() {
                             Ok(deleted) => DaemonResponse::MaintenanceResult {
                                 events_deleted: deleted,
+                                spans_deleted: 0,
+                                sessions_deleted: 0,
                             },
                             Err(e) => DaemonResponse::Error {
                                 code: 500,
                                 message: format!("prune failed: {e}"),
+                            },
+                        }
+                    }
+                    DaemonRequest::PurgeCaptureTimeline => {
+                        let guard = store.lock().await;
+                        match guard.purge_capture_timeline() {
+                            Ok((events, spans, sessions)) => DaemonResponse::MaintenanceResult {
+                                events_deleted: events,
+                                spans_deleted: spans,
+                                sessions_deleted: sessions,
+                            },
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("purge failed: {e}"),
                             },
                         }
                     }
@@ -311,10 +447,38 @@ async fn handle_connection(
                         match other {
                             DaemonRequest::GetStatus => {
                                 let count = guard.count_events().unwrap_or(0);
+                                #[cfg(target_os = "macos")]
+                                let macos_capture = Some(capture_status.snapshot().to_ipc());
+                                #[cfg(not(target_os = "macos"))]
+                                let macos_capture = None;
                                 DaemonResponse::Status {
                                     uptime_secs: started.elapsed().as_secs(),
                                     events_count: count,
                                     version: env!("CARGO_PKG_VERSION").into(),
+                                    macos_capture,
+                                }
+                            }
+                            DaemonRequest::RequestMacosAccessibility => {
+                                #[cfg(target_os = "macos")]
+                                {
+                                    let _ = collectors::macos_focus::request_accessibility_prompt();
+                                    if let Some(perms) =
+                                        collectors::macos_focus::query_permissions()
+                                    {
+                                        capture_status.seed_permissions(perms.clone());
+                                    }
+                                    DaemonResponse::MacosCapture {
+                                        status: capture_status.snapshot().to_ipc(),
+                                    }
+                                }
+                                #[cfg(not(target_os = "macos"))]
+                                {
+                                    DaemonResponse::Error {
+                                        code: 400,
+                                        message:
+                                            "macOS capture permissions are only available on macOS"
+                                                .into(),
+                                    }
                                 }
                             }
                             DaemonRequest::GetTimeline {
@@ -322,7 +486,21 @@ async fn handle_connection(
                                 until,
                                 limit,
                             } => match guard.query_spans(since, until, limit) {
-                                Ok(spans) => DaemonResponse::Timeline { spans },
+                                Ok(stored) => {
+                                    drop(guard);
+                                    let mut active = {
+                                        let p = pipeline.lock().await;
+                                        p.span_processor.active_spans()
+                                    };
+                                    {
+                                        let p = pipeline.lock().await;
+                                        p.annotate_active_spans(&mut active);
+                                    }
+                                    supplement_active_spans(&mut active, &focus_ctx);
+                                    DaemonResponse::Timeline {
+                                        spans: merge_timeline_spans(stored, active, since, limit),
+                                    }
+                                }
                                 Err(e) => DaemonResponse::Error {
                                     code: 500,
                                     message: format!("query failed: {e}"),
@@ -370,15 +548,29 @@ async fn handle_connection(
                             } => {
                                 let project_record =
                                     guard.query_project_by_name(&project).ok().flatten();
-                                let spans = guard
+                                let stored = guard
                                     .query_spans_for_project(&project, since, limit)
                                     .unwrap_or_default();
                                 let events = guard
                                     .query_activity_events_for_project(&project, since, None, limit)
                                     .unwrap_or_default();
+                                drop(guard);
+                                let mut active = {
+                                    let p = pipeline.lock().await;
+                                    p.span_processor
+                                        .active_spans()
+                                        .into_iter()
+                                        .filter(|s| s.project.as_deref() == Some(project.as_str()))
+                                        .collect::<Vec<_>>()
+                                };
+                                {
+                                    let p = pipeline.lock().await;
+                                    p.annotate_active_spans(&mut active);
+                                }
+                                supplement_active_spans(&mut active, &focus_ctx);
                                 DaemonResponse::ProjectContext {
                                     project: project_record,
-                                    spans,
+                                    spans: merge_timeline_spans(stored, active, since, limit),
                                     events,
                                 }
                             }

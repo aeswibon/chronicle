@@ -1,7 +1,11 @@
+mod app_classify;
+mod capture_status;
 mod cli;
 mod collectors;
 mod daemon;
 mod event_filter;
+mod focus_context;
+mod focus_emit;
 mod http_ingress;
 mod maintenance;
 mod project;
@@ -66,12 +70,44 @@ async fn check_status(socket: &str) -> anyhow::Result<()> {
             uptime_secs,
             events_count,
             version,
+            macos_capture,
         } => {
             let hours = uptime_secs / 3600;
             let mins = (uptime_secs % 3600) / 60;
             println!("Chronicle v{version}");
             println!("Uptime: {hours}h {mins}m");
             println!("Events recorded: {events_count}");
+            if let Some(cap) = macos_capture {
+                println!(
+                    "Focus monitor: {}",
+                    if cap.monitor_running {
+                        "running"
+                    } else {
+                        "stopped"
+                    }
+                );
+                println!(
+                    "Accessibility: {} | Screen capture: {} | Window titles: {}",
+                    if cap.accessibility_trusted {
+                        "granted"
+                    } else {
+                        "needed"
+                    },
+                    if cap.screen_capture_granted {
+                        "granted"
+                    } else {
+                        "optional"
+                    },
+                    if cap.can_read_window_titles {
+                        "yes"
+                    } else {
+                        "no"
+                    },
+                );
+                if let Some(app) = cap.frontmost_app {
+                    println!("Frontmost: {app}");
+                }
+            }
         }
         _ => println!("Unexpected response"),
     }
@@ -79,6 +115,14 @@ async fn check_status(socket: &str) -> anyhow::Result<()> {
 }
 
 async fn install_launchd(cli_watch: &[String]) -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        match collectors::macos_focus::install_helper_beside_daemon() {
+            Ok(path) => tracing::info!("installed focus monitor helper at {}", path.display()),
+            Err(e) => tracing::warn!("focus monitor helper install skipped: {e}"),
+        }
+    }
+
     if !cli_watch.is_empty() {
         let mut cfg = config::load();
         cfg.watch_dirs = cli_watch.to_vec();

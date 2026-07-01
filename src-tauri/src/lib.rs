@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod daemon_manage;
+pub mod focus_relay;
 pub mod icons;
 
 use std::sync::Mutex;
@@ -19,11 +20,14 @@ pub fn run() {
             client: Mutex::new(None),
         })
         .setup(|_app| {
+            let socket = daemon_manage::default_socket_string();
             std::thread::spawn(|| {
                 if let Err(e) = daemon_manage::ensure_daemon_running() {
                     eprintln!("chronicle ensure_daemon: {e}");
                 }
             });
+            #[cfg(target_os = "macos")]
+            focus_relay::spawn_focus_relay(socket);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -33,6 +37,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_status,
+            commands::request_macos_accessibility,
+            commands::open_macos_privacy_settings,
             commands::get_timeline,
             commands::get_events,
             commands::search_events,
@@ -48,6 +54,7 @@ pub fn run() {
             commands::install_shell_hook,
             commands::restart_daemon,
             commands::prune_noise_events,
+            commands::purge_capture_timeline,
             commands::ensure_daemon,
             commands::list_projects,
             commands::start_event_stream,

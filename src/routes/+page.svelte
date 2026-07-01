@@ -5,6 +5,8 @@
   import PageShell from '$lib/components/PageShell.svelte';
   import {
     collapseTimelineEvents,
+    isInterestingActivity,
+    shouldShowCategoryBadge,
     eventCategoryLabel,
     eventLabel,
     eventSubtitle,
@@ -14,6 +16,8 @@
     spanActivityLabels,
     isSpanActive,
     isListableSpan,
+    spanTypeLabel,
+    spanAppName,
   } from '$lib/format.js';
   import AppIcon from '$lib/components/AppIcon.svelte';
 
@@ -39,7 +43,9 @@
     }
   }
 
-  let feed = $derived(collapseTimelineEvents(events));
+  let feed = $derived(
+    collapseTimelineEvents(events.filter((e) => isInterestingActivity(e))),
+  );
   let listableSpans = $derived(spans.filter((s) => isListableSpan(s)));
 
   onMount(() => {
@@ -55,7 +61,7 @@
       unlisten = fn;
     });
 
-    const interval = setInterval(loadSpans, 30_000);
+    const interval = setInterval(loadSpans, 5_000);
     return () => {
       unlisten();
       clearInterval(interval);
@@ -75,9 +81,9 @@
       </p>
     </div>
   {:else}
-    {#if listableSpans.length > 0}
-      <section class="mb-10">
-        <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Sessions</h3>
+    <section class="mb-10">
+      <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Sessions</h3>
+      {#if listableSpans.length > 0}
         <div class="space-y-2">
           {#each listableSpans as span}
             <a
@@ -91,7 +97,7 @@
                     class:bg-[var(--accent)]={isSpanActive(span)}
                     class:bg-[var(--text-muted)]={!isSpanActive(span)}
                   ></span>
-                  <span class="text-sm font-medium text-[var(--text)] capitalize">{span.span_type}</span>
+                  <span class="text-sm font-medium text-[var(--text)]">{spanAppName(span) || spanTypeLabel(span.span_type)}</span>
                   {#each spanActivityLabels(span) as label}
                     <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--accent-muted)] text-[var(--accent)]">{label}</span>
                   {/each}
@@ -107,8 +113,12 @@
             </a>
           {/each}
         </div>
-      </section>
-    {/if}
+      {:else}
+        <p class="text-sm text-[var(--text-muted)] py-4 px-4 rounded-xl border border-dashed border-[var(--border)]">
+          No active sessions — focus an agent IDE, terminal, or editor to start one.
+        </p>
+      {/if}
+    </section>
 
     <section>
       <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Activity</h3>
@@ -127,9 +137,11 @@
                   <div class="min-w-0">
                     <div class="flex items-center gap-2 flex-wrap">
                       <span class="text-sm font-medium text-[var(--text)] truncate">{eventLabel(item.event)}</span>
-                      <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-[var(--bg-muted)] text-[var(--text-muted)]">
-                        {eventCategoryLabel(item.event)}
-                      </span>
+                      {#if shouldShowCategoryBadge(item.event)}
+                        <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-[var(--bg-muted)] text-[var(--text-muted)]">
+                          {eventCategoryLabel(item.event)}
+                        </span>
+                      {/if}
                       {#if activityLabel(item.event)}
                         <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--accent-muted)] text-[var(--accent)]">
                           {activityLabel(item.event)}

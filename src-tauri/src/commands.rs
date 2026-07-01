@@ -12,10 +12,22 @@ use crate::icons;
 static EVENT_STREAM_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Serialize)]
+pub struct MacosCaptureInfo {
+    pub monitor_running: bool,
+    pub frontmost_app: Option<String>,
+    pub title_source: Option<String>,
+    pub accessibility_trusted: bool,
+    pub screen_capture_granted: bool,
+    pub can_read_window_titles: bool,
+}
+
+#[derive(Serialize)]
 pub struct StatusInfo {
     pub uptime_secs: u64,
     pub events_count: u64,
     pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub macos_capture: Option<MacosCaptureInfo>,
 }
 
 #[tauri::command]
@@ -28,13 +40,66 @@ pub async fn get_status(state: State<'_, DaemonState>) -> Result<StatusInfo, Str
             uptime_secs,
             events_count,
             version,
+            macos_capture,
         } => Ok(StatusInfo {
             uptime_secs,
             events_count,
             version,
+            macos_capture: macos_capture.map(|c| MacosCaptureInfo {
+                monitor_running: c.monitor_running,
+                frontmost_app: c.frontmost_app,
+                title_source: c.title_source,
+                accessibility_trusted: c.accessibility_trusted,
+                screen_capture_granted: c.screen_capture_granted,
+                can_read_window_titles: c.can_read_window_titles,
+            }),
         }),
         DaemonResponse::Error { message, .. } => Err(message),
         _ => Err("unexpected response".into()),
+    }
+}
+
+
+
+#[tauri::command]
+pub async fn request_macos_accessibility(state: State<'_, DaemonState>) -> Result<MacosCaptureInfo, String> {
+    let socket_path = state.socket_path.clone();
+    let mut client = Client::connect(&socket_path).await?;
+    match client
+        .request(DaemonRequest::RequestMacosAccessibility)
+        .await?
+    {
+        DaemonResponse::MacosCapture { status } => Ok(MacosCaptureInfo {
+            monitor_running: status.monitor_running,
+            frontmost_app: status.frontmost_app,
+            title_source: status.title_source,
+            accessibility_trusted: status.accessibility_trusted,
+            screen_capture_granted: status.screen_capture_granted,
+            can_read_window_titles: status.can_read_window_titles,
+        }),
+        DaemonResponse::Error { message, .. } => Err(message),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn open_macos_privacy_settings(section: Option<String>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let url = match section.as_deref() {
+            Some("screen") => "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            _ => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        };
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = section;
+        Err("macOS privacy settings are only available on macOS".into())
     }
 }
 
@@ -330,6 +395,7 @@ pub async fn get_span_detail(
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CollectorsInfo {
     pub window_focus: bool,
     pub filesystem: bool,
@@ -338,6 +404,7 @@ pub struct CollectorsInfo {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PrivacyInfo {
     pub allowed_domains: Vec<String>,
     pub strip_query_params: bool,
@@ -346,6 +413,7 @@ pub struct PrivacyInfo {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiInfo {
     pub enabled: bool,
     pub base_url: String,
@@ -355,12 +423,14 @@ pub struct AiInfo {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SummariesInfo {
     pub auto_daily: bool,
     pub auto_daily_hour_local: u8,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfigInfo {
     pub watch_dirs: Vec<String>,
     pub collectors: CollectorsInfo,
@@ -474,19 +544,15 @@ pub async fn get_config(_state: State<'_, DaemonState>) -> Result<ConfigInfo, St
 #[tauri::command]
 pub async fn set_config(
     _state: State<'_, DaemonState>,
-    watch_dirs: Vec<String>,
-    collectors: CollectorsInfo,
-    privacy: PrivacyInfo,
-    ai: AiInfo,
-    summaries: SummariesInfo,
+    config: ConfigInfo,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let mut cfg = chronicle_config::load();
-        cfg.watch_dirs = watch_dirs;
-        cfg.collectors = collectors.into();
-        cfg.privacy = privacy.into();
-        cfg.ai = ai.into();
-        cfg.summaries = summaries.into();
+        cfg.watch_dirs = config.watch_dirs;
+        cfg.collectors = config.collectors.into();
+        cfg.privacy = config.privacy.into();
+        cfg.ai = config.ai.into();
+        cfg.summaries = config.summaries.into();
         chronicle_config::save(&cfg).map_err(|e| e.to_string())
     })
     .await
@@ -510,12 +576,40 @@ pub struct PruneNoiseResult {
     pub events_deleted: usize,
 }
 
+#[derive(Serialize)]
+pub struct PurgeTimelineResult {
+    pub events_deleted: usize,
+    pub spans_deleted: usize,
+    pub sessions_deleted: usize,
+}
+
 #[tauri::command]
 pub async fn prune_noise_events(state: State<'_, DaemonState>) -> Result<PruneNoiseResult, String> {
     let socket_path = state.socket_path.clone();
     let mut client = Client::connect(&socket_path).await?;
     match client.request(DaemonRequest::PruneNoiseEvents).await? {
-        DaemonResponse::MaintenanceResult { events_deleted } => Ok(PruneNoiseResult { events_deleted }),
+        DaemonResponse::MaintenanceResult { events_deleted, .. } => Ok(PruneNoiseResult { events_deleted }),
+        DaemonResponse::Error { message, .. } => Err(message),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+
+
+#[tauri::command]
+pub async fn purge_capture_timeline(state: State<'_, DaemonState>) -> Result<PurgeTimelineResult, String> {
+    let socket_path = state.socket_path.clone();
+    let mut client = Client::connect(&socket_path).await?;
+    match client.request(DaemonRequest::PurgeCaptureTimeline).await? {
+        DaemonResponse::MaintenanceResult {
+            events_deleted,
+            spans_deleted,
+            sessions_deleted,
+        } => Ok(PurgeTimelineResult {
+            events_deleted,
+            spans_deleted,
+            sessions_deleted,
+        }),
         DaemonResponse::Error { message, .. } => Err(message),
         _ => Err("unexpected response".into()),
     }

@@ -8,6 +8,8 @@
   import { preloadPathIcons } from '$lib/appIcons.js';
   import {
     collapseTimelineEvents,
+    isInterestingActivity,
+    shouldShowCategoryBadge,
     eventCategoryLabel,
     eventLabel,
     eventSubtitle,
@@ -17,6 +19,7 @@
     formatPathMiddle,
     isSpanActive,
     isListableSpan,
+    spanTypeLabel,
   } from '$lib/format.js';
 
   let projectName = $derived(decodeURIComponent($page.params.name ?? ''));
@@ -55,7 +58,9 @@
     }
   }
 
-  let feed = $derived(collapseTimelineEvents(events));
+  let feed = $derived(
+    collapseTimelineEvents(events.filter((e) => isInterestingActivity(e))),
+  );
   let listableSpans = $derived(spans.filter((s) => isListableSpan(s)));
 
   onMount(() => {
@@ -109,7 +114,7 @@
                     class:bg-[var(--accent)]={isSpanActive(span)}
                     class:bg-[var(--text-muted)]={!isSpanActive(span)}
                   ></span>
-                  <span class="text-sm font-medium text-[var(--text)] capitalize">{span.span_type}</span>
+                  <span class="text-sm font-medium text-[var(--text)]">{spanTypeLabel(span.span_type)}</span>
                   <span class="text-xs text-[var(--text-muted)]">{formatDuration(span.duration_ms)}</span>
                 </div>
                 <span class="text-xs text-[var(--text-muted)] tabular-nums">{formatTime(span.started_at)}</span>
@@ -135,9 +140,11 @@
                   <div class="min-w-0">
                     <div class="flex items-center gap-2 flex-wrap">
                       <span class="text-sm font-medium text-[var(--text)] truncate">{eventLabel(item.event)}</span>
-                      <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-[var(--bg-muted)] text-[var(--text-muted)]">
-                        {eventCategoryLabel(item.event)}
-                      </span>
+                      {#if shouldShowCategoryBadge(item.event)}
+                        <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-[var(--bg-muted)] text-[var(--text-muted)]">
+                          {eventCategoryLabel(item.event)}
+                        </span>
+                      {/if}
                     </div>
                     <p class="text-xs text-[var(--text-muted)] mt-1 truncate">{eventSubtitle(item.event)}</p>
                   </div>

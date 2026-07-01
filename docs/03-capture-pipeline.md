@@ -95,7 +95,7 @@ pub struct CanonicalEvent {
 - **Metadata:** `app_name`, `bundle_id` (`window_title` omitted unless a future opt-in path adds it)
 - **Project detection:** Primarily from filesystem/git collectors; window-title parsing is not used on the default macOS path
 
-**Design note:** Uses `lsappinfo` instead of AppleScript/System Events so the daemon does not trigger macOS Accessibility or Automation permission dialogs. App icons are resolved separately in the Tauri layer via a compiled Swift helper.
+**Design note:** Uses a compiled Swift helper (`chronicle-focus-monitor`) built on **NSWorkspace** for frontmost-app changes (no Automation prompt). Window titles prefer the **Accessibility** API (`AXUIElement`); if Accessibility is not granted, Chronicle falls back to **CGWindowList** metadata (may require **Screen Recording** in System Settings). TCC permissions apply per helper binary path — grant Accessibility and optionally Screen Recording to `chronicle-focus-monitor` beside the daemon. App icons are resolved separately in the Tauri layer.
 
 ### Filesystem (`filesystem.rs`)
 

@@ -38,7 +38,7 @@ fn detect_intent(event: &CanonicalEvent) -> &'static str {
         };
     }
     match event.category {
-        EventCategory::Os => "focus",
+        EventCategory::Os => "app",
         EventCategory::Shell => "terminal",
         EventCategory::Git => "git",
         EventCategory::Filesystem => "filesystem",
@@ -160,9 +160,11 @@ fn build_report_line(
                     format!("Window in {app}{title}{project}")
                 }
             } else if agent {
-                format!("Agent session in {app}{title}{project}")
+                format!("{app}{title}{project}")
+            } else if title.is_empty() {
+                format!("{app}{project}")
             } else {
-                format!("Switched to {app}{title}{project}")
+                format!("{app}{title}{project}")
             }
         }
         EventCategory::Ide => {
@@ -221,6 +223,16 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn enriches_os_without_focused_prefix() {
+        let mut e = CanonicalEvent::new("Ghostty", EventCategory::Os, "process.focus");
+        e.metadata = json!({"app_name": "Ghostty"});
+        enrich_event(&mut e);
+        let line = e.metadata["report_line"].as_str().unwrap();
+        assert!(!line.to_lowercase().contains("focused"));
+        assert!(!line.to_lowercase().contains("switched"));
+        assert!(line.contains("Ghostty"));
+    }
+
     fn enriches_shell_failure() {
         let mut e = CanonicalEvent::new("cargo", EventCategory::Shell, "command.failed");
         e.project = Some("chronicle".into());

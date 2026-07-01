@@ -1,7 +1,7 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import PageShell from '$lib/components/PageShell.svelte';
-  import { eventCategoryLabel, eventLabel, eventSubtitle, formatDateTime, groupByDate, highlightMatch } from '$lib/format.js';
+  import { eventCategoryLabel, eventLabel, eventSubtitle, formatDateTime, groupByDate, highlightMatch, shouldShowCategoryBadge } from '$lib/format.js';
   import AppIcon from '$lib/components/AppIcon.svelte';
 
   let query = $state('');
@@ -84,9 +84,11 @@
                           <p class="text-sm font-medium text-[var(--text)]">
                             {@html highlightMatch(eventLabel(event), query)}
                           </p>
-                          <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-[var(--bg-muted)] text-[var(--text-muted)]">
-                            {eventCategoryLabel(event)}
-                          </span>
+                          {#if shouldShowCategoryBadge(event)}
+                            <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-[var(--bg-muted)] text-[var(--text-muted)]">
+                              {eventCategoryLabel(event)}
+                            </span>
+                          {/if}
                         </div>
                         <p class="text-xs text-[var(--text-muted)] mt-1 truncate">{eventSubtitle(event)}</p>
                       </div>

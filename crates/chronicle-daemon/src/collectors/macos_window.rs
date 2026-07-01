@@ -1,6 +1,7 @@
 //! Front window title for the focused app (macOS).
 
 #[cfg(target_os = "macos")]
+#[allow(dead_code)]
 pub fn window_title_for_pid(pid: i32) -> Option<String> {
     if pid <= 0 {
         return None;

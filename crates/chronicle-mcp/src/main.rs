@@ -100,6 +100,7 @@ impl ChronicleMcp {
                     uptime_secs,
                     events_count,
                     version,
+                    macos_capture: _,
                 }) => text_result(
                     serde_json::to_string_pretty(&serde_json::json!({
                         "version": version,

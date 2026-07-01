@@ -4,7 +4,7 @@
   import PageShell from '$lib/components/PageShell.svelte';
   import { theme, setTheme } from '$lib/theme.svelte.js';
 
-  let status = $state(/** @type {{ version: string; events_count: number; uptime_secs: number } | null} */ (null));
+  let status = $state(/** @type {{ version: string; events_count: number; uptime_secs: number; macos_capture?: { monitor_running: boolean; frontmost_app?: string; title_source?: string; accessibility_trusted: boolean; screen_capture_granted: boolean; can_read_window_titles: boolean } } | null} */ (null));
   let watchDirs = $state('');
   let collectors = $state({
     window_focus: true,
@@ -33,6 +33,7 @@
   let configMessage = $state('');
   let hookMessage = $state('');
   let pruneMessage = $state('');
+  let purgingTimeline = $state(false);
   let pruning = $state(false);
   let saving = $state(false);
   let installingHook = $state(false);
@@ -45,66 +46,90 @@
     } catch {}
     try {
       const cfg = await invoke('get_config');
-      watchDirs = (cfg.watch_dirs ?? []).join('\n');
-      if (cfg.collectors) {
-        collectors = { ...cfg.collectors };
+      const dirs = cfg.watchDirs ?? cfg.watch_dirs ?? [];
+      watchDirs = dirs.join('\n');
+      const c = cfg.collectors;
+      if (c) {
+        collectors = {
+          window_focus: c.windowFocus ?? c.window_focus ?? true,
+          filesystem: c.filesystem ?? true,
+          git: c.git ?? true,
+          shell: c.shell ?? true,
+        };
       }
-      if (cfg.privacy) {
+      const p = cfg.privacy;
+      if (p) {
+        const domains = p.allowedDomains ?? p.allowed_domains ?? [];
         privacy = {
-          allowed_domains: (cfg.privacy.allowed_domains ?? []).join('\n'),
-          strip_query_params: cfg.privacy.strip_query_params ?? true,
-          retention_days: cfg.privacy.retention_days ?? null,
-          redact_shell_secrets: cfg.privacy.redact_shell_secrets ?? true,
+          allowed_domains: domains.join('\n'),
+          strip_query_params: p.stripQueryParams ?? p.strip_query_params ?? true,
+          retention_days: p.retentionDays ?? p.retention_days ?? null,
+          redact_shell_secrets: p.redactShellSecrets ?? p.redact_shell_secrets ?? true,
         };
       }
-      if (cfg.ai) {
+      const a = cfg.ai;
+      if (a) {
         ai = {
-          enabled: cfg.ai.enabled ?? false,
-          base_url: cfg.ai.base_url ?? 'http://127.0.0.1:11434',
-          model: cfg.ai.model ?? 'llama3.2',
-          api_key_env: cfg.ai.api_key_env ?? '',
-          timeout_secs: cfg.ai.timeout_secs ?? 60,
+          enabled: a.enabled ?? false,
+          base_url: a.baseUrl ?? a.base_url ?? 'http://127.0.0.1:11434',
+          model: a.model ?? 'llama3.2',
+          api_key_env: a.apiKeyEnv ?? a.api_key_env ?? '',
+          timeout_secs: a.timeoutSecs ?? a.timeout_secs ?? 60,
         };
       }
-      if (cfg.summaries) {
+      const s = cfg.summaries;
+      if (s) {
         summaries = {
-          auto_daily: cfg.summaries.auto_daily ?? true,
-          auto_daily_hour_local: cfg.summaries.auto_daily_hour_local ?? 21,
+          auto_daily: s.autoDaily ?? s.auto_daily ?? true,
+          auto_daily_hour_local: s.autoDailyHourLocal ?? s.auto_daily_hour_local ?? 21,
         };
       }
     } catch {}
   });
 
+  function buildConfigPayload() {
+    const dirs = watchDirs
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return {
+      watchDirs: dirs,
+      collectors: {
+        windowFocus: collectors.window_focus,
+        filesystem: collectors.filesystem,
+        git: collectors.git,
+        shell: collectors.shell,
+      },
+      privacy: {
+        allowedDomains: privacy.allowed_domains
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean),
+        stripQueryParams: privacy.strip_query_params,
+        retentionDays: privacy.retention_days,
+        redactShellSecrets: privacy.redact_shell_secrets,
+      },
+      ai: {
+        enabled: ai.enabled,
+        baseUrl: ai.base_url.trim(),
+        model: ai.model.trim(),
+        apiKeyEnv: ai.api_key_env.trim() || null,
+        timeoutSecs: ai.timeout_secs,
+      },
+      summaries: {
+        autoDaily: summaries.auto_daily,
+        autoDailyHourLocal: summaries.auto_daily_hour_local,
+      },
+    };
+  }
+
   async function saveSettings() {
     saving = true;
     configMessage = '';
     try {
-      const dirs = watchDirs
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      await invoke('set_config', {
-        watch_dirs: dirs,
-        collectors: { ...collectors },
-        privacy: {
-          allowed_domains: privacy.allowed_domains
-            .split('\n')
-            .map((s) => s.trim())
-            .filter(Boolean),
-          strip_query_params: privacy.strip_query_params,
-          retention_days: privacy.retention_days,
-          redact_shell_secrets: privacy.redact_shell_secrets,
-        },
-        ai: {
-          enabled: ai.enabled,
-          base_url: ai.base_url.trim(),
-          model: ai.model.trim(),
-          api_key_env: ai.api_key_env.trim() || null,
-          timeout_secs: ai.timeout_secs,
-        },
-        summaries: { ...summaries },
-      });
-      configMessage = 'Saved. Restart the daemon for watch dirs and collector toggles to take effect.';
+      await invoke('set_config', { config: buildConfigPayload() });
+      configMessage =
+        'Settings saved. Restart the daemon for watch directories and collector toggles to take effect.';
     } catch (e) {
       configMessage = String(e);
     } finally {
@@ -131,6 +156,22 @@
     }
   }
 
+  async function purgeTimeline() {
+    if (!confirm('Delete all events, spans, and session rollups? This cannot be undone.')) {
+      return;
+    }
+    purgingTimeline = true;
+    pruneMessage = '';
+    try {
+      const result = await invoke('purge_capture_timeline');
+      pruneMessage = `Reset complete: removed ${result.events_deleted} events, ${result.spans_deleted} spans, and ${result.sessions_deleted} sessions.`;
+    } catch (e) {
+      pruneMessage = String(e);
+    } finally {
+      purgingTimeline = false;
+    }
+  }
+
   async function pruneNoise() {
     pruning = true;
     pruneMessage = '';
@@ -142,6 +183,33 @@
       pruneMessage = String(e);
     } finally {
       pruning = false;
+    }
+  }
+
+  let captureBusy = $state(false);
+  let captureMessage = $state('');
+
+  async function requestMacosAccessibility() {
+    captureBusy = true;
+    captureMessage = '';
+    try {
+      const cap = await invoke('request_macos_accessibility');
+      if (status) status = { ...status, macos_capture: cap };
+      captureMessage = cap.accessibility_trusted
+        ? 'Accessibility granted.'
+        : 'System prompt shown — enable Chronicle focus monitor in Privacy & Security → Accessibility.';
+    } catch (e) {
+      captureMessage = String(e);
+    } finally {
+      captureBusy = false;
+    }
+  }
+
+  async function openMacosPrivacy(section) {
+    try {
+      await invoke('open_macos_privacy_settings', { section });
+    } catch (e) {
+      captureMessage = String(e);
     }
   }
 
@@ -159,6 +227,13 @@
     }
   }
 
+
+  const shellOptions = /** @type {const} */ ([
+    { value: 'zsh', label: 'Zsh' },
+    { value: 'bash', label: 'Bash' },
+    { value: 'fish', label: 'Fish' },
+  ]);
+
   const themeOptions = /** @type {const} */ ([
     { value: 'system', label: 'System' },
     { value: 'light', label: 'Light' },
@@ -166,7 +241,7 @@
   ]);
 
   const collectorRows = [
-    { key: 'window_focus', label: 'Window focus', hint: 'App switches and window/tab changes via window titles (no Accessibility prompt)' },
+    { key: 'window_focus', label: 'Window focus', hint: 'Frontmost app via NSWorkspace; window titles need Accessibility (or Screen Recording fallback)' },
     { key: 'filesystem', label: 'Filesystem', hint: 'Source file create/delete under watch dirs' },
     { key: 'git', label: 'Git', hint: 'Commits, checkouts, merges via reflog' },
     { key: 'shell', label: 'Shell hook', hint: 'Terminal commands via UDP (requires hook install)' },
@@ -198,6 +273,63 @@
       {/each}
     </div>
   </section>
+
+
+    {#if status?.macos_capture}
+      <section class="mb-8">
+        <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">macOS capture</h3>
+        <p class="text-sm text-[var(--text-secondary)] leading-relaxed mb-4">
+          Window focus uses Apple's NSWorkspace API. Window titles use the Accessibility API when permitted; otherwise Chronicle falls back to Screen Recording metadata.
+        </p>
+        <div class="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl divide-y divide-[var(--border-subtle)]">
+          <div class="flex items-center justify-between px-5 py-4">
+            <span class="text-sm text-[var(--text-secondary)]">Focus monitor</span>
+            <span class="text-sm text-[var(--text)]">{status.macos_capture.monitor_running ? 'Running' : 'Stopped'}</span>
+          </div>
+          <div class="flex items-center justify-between px-5 py-4">
+            <span class="text-sm text-[var(--text-secondary)]">Accessibility</span>
+            <span class="text-sm text-[var(--text)]">{status.macos_capture.accessibility_trusted ? 'Granted' : 'Needed for window titles'}</span>
+          </div>
+          <div class="flex items-center justify-between px-5 py-4">
+            <span class="text-sm text-[var(--text-secondary)]">Screen Recording</span>
+            <span class="text-sm text-[var(--text)]">{status.macos_capture.screen_capture_granted ? 'Granted' : 'Optional fallback'}</span>
+          </div>
+          {#if status.macos_capture.frontmost_app}
+            <div class="flex items-center justify-between px-5 py-4">
+              <span class="text-sm text-[var(--text-secondary)]">Frontmost</span>
+              <span class="text-sm text-[var(--text)]">{status.macos_capture.frontmost_app}</span>
+            </div>
+          {/if}
+          <div class="px-5 py-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onclick={requestMacosAccessibility}
+              disabled={captureBusy}
+              class="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 transition-colors disabled:opacity-50"
+            >
+              {captureBusy ? 'Requesting…' : 'Request Accessibility'}
+            </button>
+            <button
+              type="button"
+              onclick={() => openMacosPrivacy('accessibility')}
+              class="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 transition-colors"
+            >
+              Open Accessibility Settings
+            </button>
+            <button
+              type="button"
+              onclick={() => openMacosPrivacy('screen')}
+              class="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 transition-colors"
+            >
+              Open Screen Recording Settings
+            </button>
+          </div>
+          {#if captureMessage}
+            <p class="text-xs text-[var(--text-muted)] px-5 pb-4">{captureMessage}</p>
+          {/if}
+        </div>
+      </section>
+    {/if}
 
   <section class="mb-8">
     <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Privacy</h3>
@@ -267,16 +399,26 @@
   <section class="mb-8">
     <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Timeline cleanup</h3>
     <p class="text-sm text-[var(--text-secondary)] leading-relaxed mb-3">
-      Remove low-signal git noise (fetch/pull/checkout) and terminal junk already stored. Safe to run after upgrading from an older build that backfilled thousands of events.
+      Remove low-signal git noise (fetch/pull/checkout) and terminal junk already stored. Use <strong class="font-medium text-[var(--text)]">Reset timeline</strong> for a full wipe before re-capturing with a fixed daemon build.
     </p>
-    <button
-      type="button"
-      onclick={pruneNoise}
-      disabled={pruning}
-      class="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 transition-colors disabled:opacity-50"
-    >
-      {pruning ? 'Pruning…' : 'Remove low-signal events'}
-    </button>
+    <div class="flex flex-wrap gap-2">
+      <button
+        type="button"
+        onclick={pruneNoise}
+        disabled={pruning || purgingTimeline}
+        class="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 transition-colors disabled:opacity-50"
+      >
+        {pruning ? 'Pruning…' : 'Remove low-signal events'}
+      </button>
+      <button
+        type="button"
+        onclick={purgeTimeline}
+        disabled={purgingTimeline || pruning}
+        class="px-4 py-2 text-sm rounded-lg border border-red-500/40 text-red-600 dark:text-red-400 hover:border-red-500/70 transition-colors disabled:opacity-50"
+      >
+        {purgingTimeline ? 'Resetting…' : 'Reset timeline'}
+      </button>
+    </div>
     {#if pruneMessage}
       <p class="text-xs text-[var(--text-muted)] mt-2">{pruneMessage}</p>
     {/if}
@@ -340,16 +482,9 @@
         />
       </label>
     </div>
-    <div class="flex items-center gap-3">
-      <button
-        type="button"
-        onclick={saveSettings}
-        disabled={saving}
-        class="px-4 py-2 text-sm rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
-      >
-        {saving ? 'Saving…' : 'Save AI settings'}
-      </button>
-    </div>
+    <p class="text-xs text-[var(--text-muted)] mt-3">
+      Use <strong class="font-medium">Save settings</strong> below to persist AI, privacy, collectors, and watch directories together.
+    </p>
   </section>
 
   <section class="mb-8">
@@ -383,20 +518,32 @@
     <p class="text-sm text-[var(--text-secondary)] leading-relaxed mb-3">
       Records terminal commands via UDP <code class="font-mono text-xs">127.0.0.1:9712</code>. Enable the shell collector above.
     </p>
-    <div class="flex flex-wrap items-center gap-3">
-      <select
-        bind:value={shellChoice}
-        class="text-sm bg-[var(--bg-muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--text)]"
-      >
-        <option value="zsh">zsh</option>
-        <option value="bash">bash</option>
-        <option value="fish">fish</option>
-      </select>
+    <div class="flex flex-col sm:flex-row sm:items-end gap-4">
+      <div>
+        <p class="text-sm text-[var(--text-secondary)] mb-2">Shell</p>
+        <div class="flex flex-wrap gap-2" role="group" aria-label="Shell type">
+          {#each shellOptions as opt}
+            <button
+              type="button"
+              onclick={() => (shellChoice = opt.value)}
+              class="px-4 py-2 text-sm rounded-lg border transition-colors min-w-[4.5rem]"
+              class:border-[var(--accent)]={shellChoice === opt.value}
+              class:text-[var(--accent)]={shellChoice === opt.value}
+              class:bg-[var(--accent-muted)]={shellChoice === opt.value}
+              class:border-[var(--border)]={shellChoice !== opt.value}
+              class:text-[var(--text-secondary)]={shellChoice !== opt.value}
+              class:hover:border-[var(--text-muted)]={shellChoice !== opt.value}
+            >
+              {opt.label}
+            </button>
+          {/each}
+        </div>
+      </div>
       <button
         type="button"
         onclick={installHook}
         disabled={installingHook}
-        class="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 transition-colors disabled:opacity-50"
+        class="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 transition-colors disabled:opacity-50 shrink-0"
       >
         {installingHook ? 'Installing…' : 'Install shell hook'}
       </button>

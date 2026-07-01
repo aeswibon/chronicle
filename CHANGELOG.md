@@ -17,7 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Timeline cleanup** — Settings action to prune low-signal git and shell noise from existing databases
 - **Delete summaries** — remove individual daily rollups from Sessions
 - **Window/tab tracking** — `window.focus` events when the front window title changes within the same app (Safari tabs, Finder windows, etc.)
-
+- **Native macOS focus capture** — NSWorkspace + Accessibility/CGWindow helper; GUI-session relay from Chronicle.app
+- **Tab sessions** — per-window identity across IDEs, browsers, Finder, and terminals (dirty markers and spinner noise stripped)
+- **Settings** — unified save for AI, collectors, privacy, and watch directories; Tauri v2 camelCase config IPC
+- **Timeline purge** — reset capture events from Settings without deleting daily summaries
 
 ### Changed
 
@@ -30,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Project path layout overflow; Timeline nav default highlight; session active indicators after restart
 - CI rustfmt and clippy failures
+- Activity feed empty while sessions showed focus events (`activity_label` without `tab_session_key`)
+- `set_config` invalid args error in Settings (camelCase IPC)
 
 ## [0.1.0] - 2026-07-01
 

@@ -33,7 +33,12 @@ impl RuleEngine {
     }
 
     fn span_activity_labels(&self, span: &Span) -> Vec<&'static str> {
-        let end = span.ended_at.unwrap_or(span.started_at);
+        let end = span.ended_at.unwrap_or_else(|| {
+            span.metadata
+                .get("last_event_at")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis())
+        });
         let in_span: Vec<&CanonicalEvent> = self
             .recent
             .iter()

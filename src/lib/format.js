@@ -72,17 +72,22 @@ export function formatPathMiddle(path, max = 52) {
   return `${path.slice(0, head)}…${path.slice(-tail)}`;
 }
 
-/** Active span = no end time and started within the session timeout window. */
-export function isSpanActive(span, now = Date.now()) {
-  if (span.ended_at != null && span.ended_at !== undefined) return false;
-  const started = /** @type {number} */ (span.started_at ?? 0);
-  return now - started < 15 * 60 * 1000;
+/** Open span = still in progress on the daemon (no end time). */
+export function isSpanActive(span) {
+  return span.ended_at == null || span.ended_at === undefined;
 }
 
-/** Show only in-progress focus blocks (not ended, stale, or idle). */
-export function isListableSpan(span, now = Date.now()) {
+/** Show only in-progress sessions (open spans, not idle). */
+export function isListableSpan(span) {
   if (span.span_type === 'idle') return false;
-  return isSpanActive(span, now);
+  return isSpanActive(span);
+}
+
+/** Human-readable span type for session chips. */
+export function spanTypeLabel(spanType) {
+  return String(spanType ?? '')
+    .replaceAll('_', ' ')
+    .replace(/\w/g, (c) => c.toUpperCase());
 }
 
 /** Daily rollup rows worth showing (skip empty or no-activity stubs). */
@@ -121,6 +126,68 @@ function humanizeType(type) {
 }
 
 /** @param {Record<string, unknown>} event */
+
+/** @param {Record<string, unknown>} event */
+function osAppName(event) {
+  const meta = /** @type {Record<string, string>} */ (event.metadata ?? {});
+  return meta.app_name || /** @type {string} */ (event.source) || 'App';
+}
+
+/** @param {Record<string, unknown>} event */
+/** Prefer normalized tab title for any focused window (IDE, browser, Finder, terminal). */
+export function osDisplayLabel(event) {
+  const meta = /** @type {Record<string, string>} */ (event.metadata ?? {});
+  const app = osAppName(event);
+  const tab = meta.tab_title?.trim() || meta.window_title?.trim();
+  const title = tab ? normalizeDisplayTitle(tab) : null;
+  if (title) return truncate(`${app} — ${title}`, 72);
+  return app;
+}
+
+/** Strip volatile UI suffixes when rendering (mirrors Rust normalize_tab_title). */
+function normalizeDisplayTitle(title) {
+  let t = title.trim();
+  for (const marker of [' - ⏳', ' — ⏳', ' – ⏳', ' ⏳']) {
+    const idx = t.indexOf(marker);
+    if (idx >= 0) {
+      t = t.slice(0, idx);
+      break;
+    }
+  }
+  t = t.replace(/^[●•◦*○]\s*/, '').replace(/\s*[●•◦*○]$/, '');
+  for (const suffix of [' (unsaved)', ' — unsaved', ' - unsaved', ' (modified)']) {
+    if (t.toLowerCase().endsWith(suffix)) {
+      t = t.slice(0, -suffix.length);
+      break;
+    }
+  }
+  return t.trim();
+}
+
+/** Hide generic app-switch noise in the live feed. */
+export function isInterestingActivity(event) {
+  const category = event.category;
+  const type = /** @type {string} */ (event.type ?? '');
+  if (category !== 'os') return true;
+  if (type === 'window.focus') return false;
+  if (type === 'process.focus') {
+    const meta = /** @type {Record<string, string>} */ (event.metadata ?? {});
+    if (meta.tab_session_key) return true;
+    if (activityLabel(event)) return true;
+    return false;
+  }
+  if (activityLabel(event)) return true;
+  return false;
+}
+
+/** Category chip for timeline rows — never "Focus". */
+export function shouldShowCategoryBadge(event) {
+  if (event.category !== 'os') return true;
+  if (activityLabel(event)) return false;
+  return /** @type {string} */ (event.type ?? '') === 'window.focus';
+}
+
+
 export function activityLabel(event) {
   const meta = /** @type {Record<string, string>} */ (event.metadata ?? {});
   return meta.activity_label ?? null;
@@ -139,7 +206,13 @@ export function eventLabel(event) {
   const category = event.category;
   const type = /** @type {string} */ (event.type ?? '');
 
-  if (meta.report_line) return truncate(meta.report_line, 72);
+  if (category === 'os' && (type === 'process.focus' || type === 'window.focus')) {
+    return osDisplayLabel(event);
+  }
+  if (meta.report_line) {
+    const line = meta.report_line.replace(/^Focused\s+/i, '').replace(/^Switched to\s+/i, '');
+    return truncate(line, 72);
+  }
   if (meta.app_name) return meta.app_name;
   if (category === 'shell' && meta.command) return truncate(meta.command, 56);
   if (category === 'filesystem' && meta.path) return basename(meta.path);
@@ -184,8 +257,17 @@ export function eventSubtitle(event) {
 
 /** @param {Record<string, unknown>} event */
 export function eventCategoryLabel(event) {
+  if (event.category === 'os') {
+    const act = activityLabel(event);
+    if (act === 'agent session') return 'Agent';
+    if (act === 'terminal') return 'Terminal';
+    if (act === 'coding') return 'IDE';
+    if (act === 'browsing') return 'Browser';
+    if (act === 'files') return 'Files';
+    if (/** @type {string} */ (event.type ?? '') === 'window.focus') return 'Window';
+    return 'App';
+  }
   const map = {
-    os: 'Focus',
     shell: 'Terminal',
     git: 'Git',
     filesystem: 'File',
@@ -263,4 +345,10 @@ export function highlightMatch(text, query) {
   const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const regex = new RegExp(`(${escaped})`, 'gi');
   return text.replace(regex, '<mark class="bg-teal-500/20 text-teal-700 dark:text-teal-300 rounded px-0.5">$1</mark>');
+}
+
+/** App label from span metadata (live focus session). */
+export function spanAppName(span) {
+  const meta = /** @type {Record<string, string>} */ (span.metadata ?? {});
+  return meta.app_name || null;
 }

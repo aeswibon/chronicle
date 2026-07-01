@@ -8,6 +8,7 @@
     eventCategoryLabel,
     eventLabel,
     eventSubtitle,
+    shouldShowCategoryBadge,
     formatDateTime,
     formatDuration,
     formatTime,
@@ -89,9 +90,11 @@
                   <div class="min-w-0">
                     <div class="flex items-center gap-2 flex-wrap">
                       <span class="text-sm font-medium text-[var(--text)] truncate">{eventLabel(event)}</span>
-                      <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-[var(--bg-muted)] text-[var(--text-muted)]">
-                        {eventCategoryLabel(event)}
-                      </span>
+                      {#if shouldShowCategoryBadge(event)}
+                        <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-[var(--bg-muted)] text-[var(--text-muted)]">
+                          {eventCategoryLabel(event)}
+                        </span>
+                      {/if}
                     </div>
                     <p class="text-xs text-[var(--text-muted)] mt-1 truncate">{eventSubtitle(event)}</p>
                   </div>
