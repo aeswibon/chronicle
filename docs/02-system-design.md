@@ -227,6 +227,9 @@ launchctl kickstart -k gui/$UID/com.chronicle.daemon
 | New collector | Implement today | `collectors/`, register in `daemon.rs` |
 | IPC request | Implement today | `chronicle-ipc`, `handle_connection` |
 | MCP tool | Implement today | `chronicle-mcp/src/main.rs` |
+| External `emit_event` | Documented + sample | `docs/06-external-plugins.md`, `scripts/emit_event.py` |
+| Rule engine | Implemented | `rule_engine.rs` — activity labels on events/spans |
+| Collector opt-in | Implemented | `chronicle-config`, Settings UI |
 | Dynamic plugin | Stub | `chronicle-plugin` |
 | On-device AI summary | Stub | `chronicle-ai` |
 | Semantic search | IPC enum exists | `SearchMode::Semantic` unimplemented |

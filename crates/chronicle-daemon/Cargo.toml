@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 chronicle-core = { path = "../chronicle-core" }
+chronicle-config = { path = "../chronicle-config" }
+chronicle-hooks = { path = "../chronicle-hooks" }
 chronicle-ipc = { path = "../chronicle-ipc" }
 chronicle-store = { path = "../chronicle-store" }
 tokio = { workspace = true }
@@ -20,5 +22,4 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 shellexpand = "3"
 dirs = "6"
-toml = "0.8"
 libc = "0.2"

@@ -48,6 +48,8 @@ pub enum DaemonRequest {
     GetConfig,
     SetConfig {
         watch_dirs: Vec<String>,
+        #[serde(default)]
+        collectors: chronicle_config::CollectorsConfig,
     },
     InstallShellHook {
         shell: Option<String>,
@@ -95,6 +97,7 @@ pub enum DaemonResponse {
     },
     Config {
         watch_dirs: Vec<String>,
+        collectors: chronicle_config::CollectorsConfig,
     },
     Status {
         uptime_secs: u64,

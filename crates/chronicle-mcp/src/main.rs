@@ -226,6 +226,29 @@ impl ChronicleMcp {
             Err(e) => error_result(e),
         }
     }
+
+    #[tool(description = "Recent failed shell commands and other error-class events")]
+    async fn get_recent_errors(
+        &self,
+        Parameters(TimelineParams { since_ms, limit }): Parameters<TimelineParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let since = since_timestamp(since_ms);
+        match connect(&self.socket).await {
+            Ok(mut client) => match client
+                .request(DaemonRequest::GetErrors { since, limit })
+                .await
+            {
+                Ok(DaemonResponse::TimelineEvents { events }) => text_result(
+                    serde_json::to_string_pretty(&events)
+                        .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}")),
+                ),
+                Ok(DaemonResponse::Error { message, .. }) => error_result(message),
+                Ok(_) => error_result("unexpected response"),
+                Err(e) => error_result(e),
+            },
+            Err(e) => error_result(e),
+        }
+    }
 }
 
 #[tool_handler]

@@ -1,5 +1,5 @@
-use crate::config;
 use crate::project_bootstrap::{default_watch_dirs, extra_watch_dirs_from_env};
+use chronicle_config as config;
 use std::path::PathBuf;
 
 pub fn expand_path(raw: &str) -> PathBuf {

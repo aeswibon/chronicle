@@ -20,4 +20,6 @@ serde_json = "1"
 base64 = "0.22"
 tokio = { version = "1", features = ["full"] }
 chronicle-core = { path = "../crates/chronicle-core" }
+chronicle-config = { path = "../crates/chronicle-config" }
+chronicle-hooks = { path = "../crates/chronicle-hooks" }
 chronicle-ipc = { path = "../crates/chronicle-ipc" }

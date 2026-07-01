@@ -166,11 +166,12 @@ Daemon handlers in `handle_connection` map requests to store calls:
 | `get_project_context` | `query_project_by_name` + `query_spans_for_project` + `query_activity_events_for_project` |
 | `get_span` | `query_span_by_id` + time-bounded events |
 | `get_status` | `count_events` + uptime |
-| `emit_event` | `insert_event` (bypasses collectors) |
+| `get_errors` | `query_errors` (failed shell commands) |
+| `emit_event` | Enqueues event through the same pipeline as collectors |
 
 Unimplemented IPC requests return `Error { code: 400, message: "unimplemented" }`:
 
-- `get_errors`, `get_sessions` (enums exist for future work)
+- `get_sessions` (schema reserved for AI rollups)
 
 ---
 

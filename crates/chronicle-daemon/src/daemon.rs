@@ -67,14 +67,35 @@ impl Daemon {
             process_events(event_rx, store_persist, counter, broadcast_tx_clone).await;
         });
 
-        let collectors: Vec<collectors::Collector> = vec![
-            collectors::Collector::WindowFocus(collectors::window_focus::WindowFocusCollector),
-            collectors::Collector::Filesystem(collectors::filesystem::FilesystemCollector::new(
-                Some(watch_dirs.clone()),
-            )),
-            collectors::Collector::Shell(collectors::shell::ShellHookCollector),
-            collectors::Collector::Git(collectors::git::GitCollector::new(watch_dirs.clone())),
-        ];
+        let collector_cfg = chronicle_config::load().collectors;
+
+        let mut collectors: Vec<collectors::Collector> = Vec::new();
+        if collector_cfg.window_focus {
+            collectors.push(collectors::Collector::WindowFocus(
+                collectors::window_focus::WindowFocusCollector,
+            ));
+        }
+        if collector_cfg.filesystem {
+            collectors.push(collectors::Collector::Filesystem(
+                collectors::filesystem::FilesystemCollector::new(Some(watch_dirs.clone())),
+            ));
+        }
+        if collector_cfg.shell {
+            collectors.push(collectors::Collector::Shell(
+                collectors::shell::ShellHookCollector,
+            ));
+        }
+        if collector_cfg.git {
+            collectors.push(collectors::Collector::Git(
+                collectors::git::GitCollector::new(watch_dirs.clone()),
+            ));
+        }
+
+        if collectors.is_empty() {
+            warn!(
+                "all collectors disabled in config — only emit_event / IPC events will be recorded"
+            );
+        }
 
         for collector in collectors {
             let tx = event_tx.clone();
@@ -132,6 +153,7 @@ impl Daemon {
                             let counter = event_counter.clone();
                             let started = started_at;
                             let broadcast_rx = broadcast_tx.subscribe();
+                            let event_tx_conn = event_tx.clone();
                             tokio::spawn(async move {
                                 handle_connection(
                                     &mut conn,
@@ -139,6 +161,7 @@ impl Daemon {
                                     &counter,
                                     started,
                                     broadcast_rx,
+                                    event_tx_conn,
                                 )
                                 .await;
                             });
@@ -164,11 +187,14 @@ async fn process_events(
     broadcast_tx: broadcast::Sender<CanonicalEvent>,
 ) {
     let mut span_processor = SpanProcessor::new();
+    let mut rule_engine = crate::rule_engine::RuleEngine::new();
 
-    while let Some(event) = rx.recv().await {
+    while let Some(mut event) = rx.recv().await {
         if !event_filter::should_record(&event) {
             continue;
         }
+
+        rule_engine.process(&mut event);
 
         {
             let guard = store.lock().await;
@@ -183,7 +209,8 @@ async fn process_events(
             }
         }
 
-        if let Some(span) = span_processor.process(&event) {
+        if let Some(mut span) = span_processor.process(&event) {
+            rule_engine.annotate_span(&mut span);
             if let Err(e) = store.lock().await.insert_span(&span) {
                 error!("persist span: {e}");
             }
@@ -206,6 +233,7 @@ async fn handle_connection(
     _counter: &Arc<AtomicU64>,
     started: Instant,
     mut broadcast_rx: broadcast::Receiver<CanonicalEvent>,
+    event_tx: mpsc::Sender<CanonicalEvent>,
 ) {
     match conn.read_request().await {
         Ok(req) => match req {
@@ -324,15 +352,30 @@ async fn handle_connection(
                             },
                         }
                     }
-                    DaemonRequest::GetConfig => {
-                        let cfg = crate::config::load();
-                        DaemonResponse::Config {
-                            watch_dirs: cfg.watch_dirs,
+                    DaemonRequest::GetErrors { since, limit } => {
+                        match store.query_errors(since, limit) {
+                            Ok(events) => DaemonResponse::TimelineEvents { events },
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("errors query failed: {e}"),
+                            },
                         }
                     }
-                    DaemonRequest::SetConfig { watch_dirs } => {
-                        let cfg = crate::config::ChronicleConfig { watch_dirs };
-                        match crate::config::save(&cfg) {
+                    DaemonRequest::GetConfig => {
+                        let cfg = chronicle_config::load();
+                        DaemonResponse::Config {
+                            watch_dirs: cfg.watch_dirs,
+                            collectors: cfg.collectors,
+                        }
+                    }
+                    DaemonRequest::SetConfig {
+                        watch_dirs,
+                        collectors,
+                    } => {
+                        let mut cfg = chronicle_config::load();
+                        cfg.watch_dirs = watch_dirs;
+                        cfg.collectors = collectors;
+                        match chronicle_config::save(&cfg) {
                             Ok(()) => DaemonResponse::Ack {
                                 event_id: "config_saved".into(),
                             },
@@ -343,7 +386,7 @@ async fn handle_connection(
                         }
                     }
                     DaemonRequest::InstallShellHook { shell } => {
-                        match crate::hook_install::install(shell.as_deref()) {
+                        match chronicle_hooks::install(shell.as_deref()) {
                             Ok(()) => DaemonResponse::Ack {
                                 event_id: "hook_installed".into(),
                             },
@@ -355,13 +398,12 @@ async fn handle_connection(
                     }
                     DaemonRequest::EmitEvent { event } => {
                         let event_id = event.id.to_string();
-                        if let Err(e) = store.insert_event(&event) {
-                            DaemonResponse::Error {
-                                code: 500,
-                                message: format!("insert failed: {e}"),
-                            }
-                        } else {
-                            DaemonResponse::Ack { event_id }
+                        match event_tx.send(event).await {
+                            Ok(()) => DaemonResponse::Ack { event_id },
+                            Err(_) => DaemonResponse::Error {
+                                code: 503,
+                                message: "event pipeline unavailable".into(),
+                            },
                         }
                     }
                     _ => DaemonResponse::Error {

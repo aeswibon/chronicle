@@ -131,6 +131,33 @@ impl Store {
         rows.collect()
     }
 
+    /// Failed shell commands and other error-class events.
+    pub fn query_errors(&self, since: i64, limit: u32) -> SqlResult<Vec<CanonicalEvent>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, timestamp, source, category, type, project, workspace, duration_ms, metadata
+             FROM events WHERE timestamp >= ?1
+             AND type = 'command.failed'
+             ORDER BY timestamp DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![since, limit], |row| {
+            let metadata_str: String = row.get(8)?;
+            Ok(CanonicalEvent {
+                id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                timestamp: row.get(1)?,
+                source: row.get(2)?,
+                category: serde_json::from_str(&row.get::<_, String>(3)?)
+                    .unwrap_or(chronicle_core::EventCategory::Shell),
+                r#type: row.get(4)?,
+                project: row.get(5)?,
+                workspace: row.get(6)?,
+                duration_ms: row.get(7)?,
+                metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
+                version: "1.0".into(),
+            })
+        })?;
+        rows.collect()
+    }
+
     pub fn insert_span(&self, span: &Span) -> SqlResult<()> {
         let mut stmt = self.conn.prepare_cached(
             "INSERT INTO spans (id, trace_id, parent_id, span_type, project, started_at, ended_at, duration_ms, event_count, metadata)
@@ -505,5 +532,21 @@ mod tests {
         assert_eq!(store.count_spans().unwrap(), 0);
         let events = store.query_events(0, None, 10).unwrap();
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_query_errors() {
+        let store = setup_store();
+        let mut ok = CanonicalEvent::new("cargo", EventCategory::Shell, "command.completed");
+        ok.metadata = serde_json::json!({"command": "cargo test", "exit_code": "0"});
+        store.insert_event(&ok).unwrap();
+
+        let mut fail = CanonicalEvent::new("cargo", EventCategory::Shell, "command.failed");
+        fail.metadata = serde_json::json!({"command": "cargo build", "exit_code": "101"});
+        store.insert_event(&fail).unwrap();
+
+        let errors = store.query_errors(0, 10).unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].r#type, "command.failed");
     }
 }

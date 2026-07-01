@@ -4,8 +4,15 @@
   import PageShell from '$lib/components/PageShell.svelte';
   import { theme, setTheme } from '$lib/theme.svelte.js';
 
-  let status = $state(null);
+  let status = $state(/** @type {{ version: string; events_count: number; uptime_secs: number } | null} */ (null));
   let watchDirs = $state('');
+  let collectors = $state({
+    window_focus: true,
+    filesystem: true,
+    git: true,
+    shell: true,
+  });
+  let shellChoice = $state('zsh');
   let configMessage = $state('');
   let hookMessage = $state('');
   let saving = $state(false);
@@ -18,10 +25,13 @@
     try {
       const cfg = await invoke('get_config');
       watchDirs = (cfg.watch_dirs ?? []).join('\n');
+      if (cfg.collectors) {
+        collectors = { ...cfg.collectors };
+      }
     } catch {}
   });
 
-  async function saveWatchDirs() {
+  async function saveSettings() {
     saving = true;
     configMessage = '';
     try {
@@ -29,8 +39,11 @@
         .split('\n')
         .map((s) => s.trim())
         .filter(Boolean);
-      await invoke('set_config', { watchDirs: dirs });
-      configMessage = 'Saved. Restart the daemon for watch directories to take effect.';
+      await invoke('set_config', {
+        watch_dirs: dirs,
+        collectors: { ...collectors },
+      });
+      configMessage = 'Saved. Restart the daemon for watch dirs and collector toggles to take effect.';
     } catch (e) {
       configMessage = String(e);
     } finally {
@@ -42,8 +55,14 @@
     installingHook = true;
     hookMessage = '';
     try {
-      await invoke('install_shell_hook', { shell: 'zsh' });
-      hookMessage = 'Shell hook installed. Restart your terminal or run: source ~/.zshrc';
+      await invoke('install_shell_hook', { shell: shellChoice });
+      const rc =
+        shellChoice === 'fish'
+          ? '~/.config/fish/config.fish'
+          : shellChoice === 'bash'
+            ? '~/.bashrc'
+            : '~/.zshrc';
+      hookMessage = `Shell hook installed. Restart your terminal or run: source ${rc}`;
     } catch (e) {
       hookMessage = String(e);
     } finally {
@@ -56,9 +75,41 @@
     { value: 'light', label: 'Light' },
     { value: 'dark', label: 'Dark' },
   ]);
+
+  const collectorRows = [
+    { key: 'window_focus', label: 'Window focus', hint: 'Active app and window title (macOS)' },
+    { key: 'filesystem', label: 'Filesystem', hint: 'Source file create/delete under watch dirs' },
+    { key: 'git', label: 'Git', hint: 'Commits, checkouts, merges via reflog' },
+    { key: 'shell', label: 'Shell hook', hint: 'Terminal commands via UDP (requires hook install)' },
+  ];
 </script>
 
-<PageShell title="Settings" description="Capture paths, shell hook, and appearance.">
+<PageShell title="Settings" description="Collectors, capture paths, shell hook, and appearance.">
+  <section class="mb-8">
+    <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Collectors</h3>
+    <p class="text-sm text-[var(--text-secondary)] leading-relaxed mb-4">
+      Each collector is opt-in. Disabled collectors are not started when the daemon restarts.
+    </p>
+    <div class="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl divide-y divide-[var(--border-subtle)]">
+      {#each collectorRows as row}
+        <label class="flex items-start gap-4 px-5 py-4 cursor-pointer">
+          <input
+            type="checkbox"
+            class="mt-1 accent-[var(--accent)]"
+            checked={collectors[row.key]}
+            onchange={() => {
+              collectors[row.key] = !collectors[row.key];
+            }}
+          />
+          <span>
+            <span class="text-sm text-[var(--text)] block">{row.label}</span>
+            <span class="text-xs text-[var(--text-muted)]">{row.hint}</span>
+          </span>
+        </label>
+      {/each}
+    </div>
+  </section>
+
   <section class="mb-8">
     <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Watch directories</h3>
     <p class="text-sm text-[var(--text-secondary)] leading-relaxed mb-3">
@@ -73,11 +124,11 @@
     <div class="flex items-center gap-3 mt-3">
       <button
         type="button"
-        onclick={saveWatchDirs}
+        onclick={saveSettings}
         disabled={saving}
         class="px-4 py-2 text-sm rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
       >
-        {saving ? 'Saving…' : 'Save watch dirs'}
+        {saving ? 'Saving…' : 'Save settings'}
       </button>
       {#if configMessage}
         <p class="text-xs text-[var(--text-muted)]">{configMessage}</p>
@@ -87,17 +138,27 @@
 
   <section class="mb-8">
     <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Shell hook</h3>
-    <p class="text-sm text-[var(--text-secondary)] leading-relaxed">
-      Records terminal commands via UDP <code class="font-mono text-xs">127.0.0.1:9712</code>.
+    <p class="text-sm text-[var(--text-secondary)] leading-relaxed mb-3">
+      Records terminal commands via UDP <code class="font-mono text-xs">127.0.0.1:9712</code>. Enable the shell collector above.
     </p>
-    <button
-      type="button"
-      onclick={installHook}
-      disabled={installingHook}
-      class="mt-3 px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 transition-colors disabled:opacity-50"
-    >
-      {installingHook ? 'Installing…' : 'Install zsh hook'}
-    </button>
+    <div class="flex flex-wrap items-center gap-3">
+      <select
+        bind:value={shellChoice}
+        class="text-sm bg-[var(--bg-muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--text)]"
+      >
+        <option value="zsh">zsh</option>
+        <option value="bash">bash</option>
+        <option value="fish">fish</option>
+      </select>
+      <button
+        type="button"
+        onclick={installHook}
+        disabled={installingHook}
+        class="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 transition-colors disabled:opacity-50"
+      >
+        {installingHook ? 'Installing…' : 'Install shell hook'}
+      </button>
+    </div>
     {#if hookMessage}
       <p class="text-xs text-[var(--text-muted)] mt-2">{hookMessage}</p>
     {/if}

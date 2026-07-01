@@ -137,9 +137,39 @@ Hook source: `assets/hooks/chronicle.zsh` — uses `preexec` / `precmd` zsh hook
 
 Install paths:
 
-- CLI: `chronicle-daemon hook --shell zsh`
-- UI: Settings → Install zsh hook (IPC `install_shell_hook`)
-- Manual: append to `~/.zshrc` via `hook install`
+- CLI: `chronicle-daemon hook --shell zsh|bash|fish`
+- UI: Settings → Install shell hook
+- Manual: `~/.chronicle/hooks/chronicle.{zsh,bash,fish}`
+
+### Collector opt-in
+
+Configured in `~/.chronicle/config.toml` and **Settings → Collectors**:
+
+```toml
+[collectors]
+window_focus = true
+filesystem = true
+git = true
+shell = true
+```
+
+Disabled collectors are not spawned on daemon start. Restart the daemon after changes.
+
+---
+
+## Rule engine
+
+`rule_engine.rs` adds deterministic **activity labels** (no AI) before events are stored:
+
+| Signal | Example label |
+|--------|----------------|
+| `cargo test`, `pytest`, `jest` | `test iteration` |
+| `lldb`, `dlv`, `cargo run` | `debugging` |
+| `kubectl`, `helm`, `docker compose` | `deployment` |
+| `cargo build`, `eslint` | `build` |
+| `commit.created` | `commit` |
+
+Labels are written to `metadata.activity_label`. When a span closes, compound labels (e.g. `test iteration` + `debugging` → `debugging session`) are stored on `span.metadata.activity_labels`.
 
 ---
 

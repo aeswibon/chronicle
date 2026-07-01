@@ -175,9 +175,11 @@ chronicle-daemon start [--socket PATH] [--store PATH] [--watch DIR]...
 chronicle-daemon status [--socket PATH]
 chronicle-daemon install [--watch DIR]...   # writes plist + config
 chronicle-daemon uninstall
-chronicle-daemon hook [--shell zsh|fish]
+chronicle-daemon hook [--shell zsh|bash|fish]
 chronicle-daemon hook-print zsh              # stdout script for manual install
 ```
+
+If MCP shows "Not connected" while developing Chronicle: `./scripts/mcp-doctor.sh`, then restart Cursor or toggle MCP under Settings. Agent-stack conventions live in **Cursor User Rules** (not in this repo).
 
 ---
 
@@ -193,6 +195,7 @@ chronicle-daemon hook-print zsh              # stdout script for manual install
 ### Commands
 
 ```bash
+make verify    # fmt + test + clippy + bun check (CI-equivalent)
 cargo fmt --all
 cargo clippy --workspace -- -D warnings
 cargo test --workspace

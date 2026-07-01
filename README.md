@@ -75,7 +75,11 @@ Configure watch paths in the app under **Settings**, or edit `~/.chronicle/confi
 | Window focus | `process.focus` | App name, bundle ID, window title |
 | Filesystem | `file.created` / `file.deleted` | Source files under watch dirs; ignores `node_modules`, `target`, … |
 | Git | `commit.created`, `branch.checkout`, … | Watches reflogs under discovered repos |
-| Shell | `command.completed` / `command.failed` | UDP hook on `127.0.0.1:9712` |
+| Shell | `command.completed` / `command.failed` | UDP hook on `127.0.0.1:9712` (zsh, bash, fish) |
+
+Each collector can be disabled in **Settings** or `~/.chronicle/config.toml`. See [capture pipeline](docs/03-capture-pipeline.md#collector-opt-in).
+
+Extensions can emit events via [`emit_event`](docs/06-external-plugins.md) (UDS) — same pipeline as collectors.
 
 ---
 
@@ -90,7 +94,7 @@ Build and register in your MCP client:
 }
 ```
 
-Tools: `chronicle_status`, `search_events`, `list_projects`, `get_timeline`, `get_project_context`. Requires the daemon to be running.
+Tools: `chronicle_status`, `search_events`, `list_projects`, `get_timeline`, `get_project_context`, `get_recent_errors`. Requires the daemon to be running.
 
 ---
 

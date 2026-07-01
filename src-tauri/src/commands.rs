@@ -1,6 +1,6 @@
 use chronicle_core::{CanonicalEvent, ProjectRecord, Span};
 use chronicle_ipc::{Client, DaemonRequest, DaemonResponse, SearchMode};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -100,6 +100,24 @@ pub async fn search_events(
     }
 }
 
+#[tauri::command]
+pub async fn get_errors(
+    state: State<'_, DaemonState>,
+    since: i64,
+    limit: u32,
+) -> Result<Vec<CanonicalEvent>, String> {
+    let socket_path = state.socket_path.clone();
+    let mut client = Client::connect(&socket_path).await?;
+    match client
+        .request(DaemonRequest::GetErrors { since, limit })
+        .await?
+    {
+        DaemonResponse::TimelineEvents { events } => Ok(events),
+        DaemonResponse::Error { message, .. } => Err(message),
+        _ => Err("unexpected response".into()),
+    }
+}
+
 #[derive(Serialize)]
 pub struct ProjectContextInfo {
     pub project: Option<ProjectRecord>,
@@ -165,54 +183,82 @@ pub async fn get_span_detail(
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+pub struct CollectorsInfo {
+    pub window_focus: bool,
+    pub filesystem: bool,
+    pub git: bool,
+    pub shell: bool,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct ConfigInfo {
     pub watch_dirs: Vec<String>,
+    pub collectors: CollectorsInfo,
+}
+
+impl From<chronicle_config::CollectorsConfig> for CollectorsInfo {
+    fn from(c: chronicle_config::CollectorsConfig) -> Self {
+        Self {
+            window_focus: c.window_focus,
+            filesystem: c.filesystem,
+            git: c.git,
+            shell: c.shell,
+        }
+    }
+}
+
+impl From<CollectorsInfo> for chronicle_config::CollectorsConfig {
+    fn from(c: CollectorsInfo) -> Self {
+        Self {
+            window_focus: c.window_focus,
+            filesystem: c.filesystem,
+            git: c.git,
+            shell: c.shell,
+        }
+    }
 }
 
 #[tauri::command]
-pub async fn get_config(state: State<'_, DaemonState>) -> Result<ConfigInfo, String> {
-    let socket_path = state.socket_path.clone();
-    let mut client = Client::connect(&socket_path).await?;
-    match client.request(DaemonRequest::GetConfig).await? {
-        DaemonResponse::Config { watch_dirs } => Ok(ConfigInfo { watch_dirs }),
-        DaemonResponse::Error { message, .. } => Err(message),
-        _ => Err("unexpected response".into()),
-    }
+pub async fn get_config(_state: State<'_, DaemonState>) -> Result<ConfigInfo, String> {
+    tokio::task::spawn_blocking(|| {
+        let cfg = chronicle_config::load();
+        ConfigInfo {
+            watch_dirs: cfg.watch_dirs,
+            collectors: cfg.collectors.into(),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn set_config(
-    state: State<'_, DaemonState>,
+    _state: State<'_, DaemonState>,
     watch_dirs: Vec<String>,
+    collectors: CollectorsInfo,
 ) -> Result<(), String> {
-    let socket_path = state.socket_path.clone();
-    let mut client = Client::connect(&socket_path).await?;
-    match client
-        .request(DaemonRequest::SetConfig { watch_dirs })
-        .await?
-    {
-        DaemonResponse::Ack { .. } => Ok(()),
-        DaemonResponse::Error { message, .. } => Err(message),
-        _ => Err("unexpected response".into()),
-    }
+    tokio::task::spawn_blocking(move || {
+        let cfg = chronicle_config::ChronicleConfig {
+            watch_dirs,
+            collectors: collectors.into(),
+        };
+        chronicle_config::save(&cfg).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn install_shell_hook(
-    state: State<'_, DaemonState>,
+    _state: State<'_, DaemonState>,
     shell: Option<String>,
 ) -> Result<(), String> {
-    let socket_path = state.socket_path.clone();
-    let mut client = Client::connect(&socket_path).await?;
-    match client
-        .request(DaemonRequest::InstallShellHook { shell })
-        .await?
-    {
-        DaemonResponse::Ack { .. } => Ok(()),
-        DaemonResponse::Error { message, .. } => Err(message),
-        _ => Err("unexpected response".into()),
-    }
+    tokio::task::spawn_blocking(move || {
+        chronicle_hooks::install(shell.as_deref()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
