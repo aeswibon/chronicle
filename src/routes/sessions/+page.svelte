@@ -7,7 +7,10 @@
   let sessions = $state([]);
   let loading = $state(true);
   let error = $state('');
+  let notice = $state('');
   let generating = $state(false);
+  /** @type {{ summary: string; started_at: number; session_type: string; span_count: number; event_count: number } | null} */
+  let preview = $state(null);
 
   async function load() {
     loading = true;
@@ -25,11 +28,26 @@
 
   async function generateToday() {
     generating = true;
+    error = '';
+    notice = '';
+    preview = null;
     try {
       const since = new Date();
       since.setHours(0, 0, 0, 0);
-      await invoke('summarize_day', { since: since.getTime(), until: null });
-      await load();
+      const result = await invoke('summarize_day', { since: since.getTime(), until: null });
+      if (result.persisted) {
+        preview = null;
+        await load();
+      } else {
+        preview = {
+          summary: result.summary,
+          started_at: since.getTime(),
+          session_type: 'focus',
+          span_count: 0,
+          event_count: 0,
+        };
+        notice = result.notice ?? 'Summary was not saved to the database.';
+      }
     } catch (e) {
       error = String(e);
     } finally {
@@ -56,14 +74,25 @@
     <p class="text-sm text-[var(--text-secondary)] mb-4">{error}</p>
   {/if}
 
+  {#if notice}
+    <p class="text-xs text-[var(--text-muted)] mb-4 leading-relaxed">{notice}</p>
+  {/if}
+
+  {#if preview}
+    <article class="bg-[var(--bg-elevated)] border border-[var(--accent)]/40 rounded-xl px-5 py-4 mb-6">
+      <p class="text-xs font-medium text-[var(--accent)] uppercase tracking-wider mb-2">Today's summary</p>
+      <p class="text-sm text-[var(--text-secondary)] leading-relaxed">{preview.summary}</p>
+    </article>
+  {/if}
+
   {#if loading}
     <p class="text-sm text-[var(--text-muted)]">Loading…</p>
-  {:else if sessions.length === 0}
+  {:else if sessions.length === 0 && !preview}
     <div class="text-center py-20 rounded-xl border border-dashed border-[var(--border)]">
       <p class="text-sm text-[var(--text-secondary)]">No session rollups yet.</p>
       <p class="text-xs text-[var(--text-muted)] mt-2">Generate a summary from today's spans and events.</p>
     </div>
-  {:else}
+  {:else if sessions.length > 0}
     <div class="space-y-3">
       {#each sessions as session}
         <article class="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-5 py-4">

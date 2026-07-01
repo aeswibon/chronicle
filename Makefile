@@ -15,5 +15,8 @@ clippy:
 frontend:
 	bun run check
 
-mcp-doctor:
-	./scripts/mcp-doctor.sh
+install-daemon:
+	cargo build --release -p chronicle-daemon
+	./target/release/chronicle-daemon install
+	launchctl kickstart -k gui/$$(id -u)/com.chronicle.daemon
+

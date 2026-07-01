@@ -142,19 +142,83 @@ pub async fn get_sessions(
     }
 }
 
+#[derive(Serialize)]
+pub struct SummarizeResult {
+    pub summary: String,
+    pub persisted: bool,
+    pub notice: Option<String>,
+}
+
+fn summarize_needs_fallback(message: &str) -> bool {
+    message.contains("unknown variant `summarize_day`") || message.contains("unimplemented")
+}
+
+async fn summarize_day_fallback(
+    client: &mut Client,
+    since: i64,
+    until: i64,
+) -> Result<SummarizeResult, String> {
+    let spans = match client
+        .request(DaemonRequest::GetTimeline {
+            since,
+            until: Some(until),
+            limit: 200,
+        })
+        .await?
+    {
+        DaemonResponse::Timeline { spans } => spans,
+        DaemonResponse::Error { message, .. } => return Err(message),
+        _ => return Err("unexpected timeline response".into()),
+    };
+
+    let events = match client
+        .request(DaemonRequest::GetEvents {
+            since,
+            until: Some(until),
+            limit: 500,
+        })
+        .await?
+    {
+        DaemonResponse::TimelineEvents { events } => events,
+        DaemonResponse::Error { message, .. } => return Err(message),
+        _ => return Err("unexpected events response".into()),
+    };
+
+    let session = chronicle_ai::build_daily_session(since, until, &spans, &events);
+    Ok(SummarizeResult {
+        summary: session.summary.unwrap_or_default(),
+        persisted: false,
+        notice: Some(
+            "Summary generated locally. Rebuild and restart the daemon to persist rollups: cargo build --release -p chronicle-daemon && chronicle-daemon install && launchctl kickstart -k gui/$(id -u)/com.chronicle.daemon".into(),
+        ),
+    })
+}
+
 #[tauri::command]
 pub async fn summarize_day(
     state: State<'_, DaemonState>,
     since: i64,
     until: Option<i64>,
-) -> Result<String, String> {
+) -> Result<SummarizeResult, String> {
     let socket_path = state.socket_path.clone();
     let mut client = Client::connect(&socket_path).await?;
+    let until = until.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
     match client
-        .request(DaemonRequest::SummarizeDay { since, until })
+        .request(DaemonRequest::SummarizeDay {
+            since,
+            until: Some(until),
+        })
         .await?
     {
-        DaemonResponse::DailySummary { summary, .. } => Ok(summary),
+        DaemonResponse::DailySummary { summary, .. } => Ok(SummarizeResult {
+            summary,
+            persisted: true,
+            notice: None,
+        }),
+        DaemonResponse::Error { message, .. } if summarize_needs_fallback(&message) => {
+            summarize_day_fallback(&mut client, since, until).await
+        }
         DaemonResponse::Error { message, .. } => Err(message),
         _ => Err("unexpected response".into()),
     }
@@ -342,6 +406,13 @@ pub async fn restart_daemon() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {
         #[cfg(target_os = "macos")]
         {
+            let release = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../target/release/chronicle-daemon");
+            if release.is_file() {
+                let _ = std::process::Command::new(&release)
+                    .arg("install")
+                    .status();
+            }
             let uid = std::process::Command::new("id")
                 .arg("-u")
                 .output()
@@ -353,12 +424,13 @@ pub async fn restart_daemon() -> Result<(), String> {
                 .status()
                 .map_err(|e| e.to_string())?;
             if status.success() {
-                return Ok(());
+                Ok(())
+            } else {
+                Err(
+                    "launchctl kickstart failed — install the daemon with chronicle-daemon install"
+                        .into(),
+                )
             }
-            return Err(
-                "launchctl kickstart failed — install the daemon with chronicle-daemon install"
-                    .into(),
-            );
         }
         #[cfg(not(target_os = "macos"))]
         {
