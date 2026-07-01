@@ -179,7 +179,7 @@ jobs:
 
   update-homebrew-cask:
     name: Update Homebrew cask
-    needs: [tauri]
+    needs: [release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -189,21 +189,49 @@ jobs:
           ref: master
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v8.0.1
-        with:
-          pattern: chronicle-*
-          merge-multiple: true
+      - name: Download published release checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p release-checksums
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${{ github.repository }}" \
+            --pattern "checksums-*.txt" \
+            --dir release-checksums
+          ls -la release-checksums
 
       - name: Update Casks/chronicle.rb checksums
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          node scripts/update-homebrew-cask.mjs "$VERSION" checksums-arm64.txt checksums-x64.txt
+          node scripts/update-homebrew-cask.mjs \
+            "$VERSION" \
+            release-checksums/checksums-arm64.txt \
+            release-checksums/checksums-x64.txt
+
+      - name: Verify cask matches published DMGs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release-dmgs
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${{ github.repository }}" \
+            --pattern "chronicle-*.dmg" \
+            --dir release-dmgs
+          ARM=$(cut -d' ' -f1 release-checksums/checksums-arm64.txt)
+          X64=$(cut -d' ' -f1 release-checksums/checksums-x64.txt)
+          test "$(shasum -a 256 release-dmgs/chronicle-arm64.dmg | awk '{print $1}')" = "$ARM"
+          test "$(shasum -a 256 release-dmgs/chronicle-x64.dmg | awk '{print $1}')" = "$X64"
+          rg -q "version \"${VERSION}\"" Casks/chronicle.rb
+          rg -q "$ARM" Casks/chronicle.rb
+          rg -q "$X64" Casks/chronicle.rb
 
       - name: Commit and push cask update
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin master
           git add Casks/chronicle.rb
           if git diff --staged --quiet; then
             echo "Cask already up to date for v${VERSION}"

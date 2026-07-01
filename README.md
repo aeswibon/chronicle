@@ -115,6 +115,23 @@ brew trust aeswibon/chronicle
 brew install --cask chronicle
 ```
 
+**Upgrade** (Homebrew does not include casks in plain `brew upgrade`):
+
+```bash
+brew update
+brew upgrade --cask chronicle
+```
+
+If you installed from a DMG instead of the tap, Homebrew will not list Chronicle in `brew outdated --cask` — use `brew install --cask chronicle` to switch to the tap, or download the latest DMG from [Releases](https://github.com/aeswibon/chronicle/releases).
+
+**Checksum errors** after a release usually mean a stale download cache:
+
+```bash
+brew update
+brew cleanup --prune=1
+brew install --cask chronicle
+```
+
 The cask lives in `Casks/chronicle.rb` (not `Formula/`).
 
 ---
