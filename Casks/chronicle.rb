@@ -22,6 +22,29 @@ cask "chronicle" do
 
   depends_on macos: :monterey
 
+  preflight do
+    command.run(
+      "/usr/bin/osascript",
+      args:         ["-e", 'tell application "Chronicle" to if it is running then quit'],
+      print_stderr: false,
+    )
+
+    [
+      Pathname("#{appdir}/Chronicle.app"),
+      Pathname("/Applications/Chronicle.app"),
+      Pathname("#{ENV.fetch("HOME", Dir.home)}/Applications/Chronicle.app"),
+    ].uniq.each do |path|
+      next unless path.directory?
+
+      opoo "Replacing existing Chronicle.app at #{path}"
+      if path.parent.writable? || path.writable?
+        FileUtils.rm_rf(path)
+      else
+        command.run!("/bin/rm", args: ["-rf", path], sudo: true)
+      end
+    end
+  end
+
   app "Chronicle.app"
 
   zap trash: [
