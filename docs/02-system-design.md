@@ -136,7 +136,7 @@ Collectors are **push-based**: they send `CanonicalEvent` and do not await persi
 Svelte page
   → invoke('get_events', …)
     → commands.rs
-      → chronicle_ipc::Client::connect("/tmp/chronicle.sock")
+      → chronicle_ipc::Client::connect("~/.chronicle/chronicle.sock")
         → DaemonRequest / DaemonResponse
 ```
 
@@ -173,7 +173,7 @@ This mirrors how other MCP servers work and keeps MCP dependencies (`rmcp`) out 
 | `~/.chronicle/chronicle.db` | Store | Event data |
 | `~/.chronicle/config.toml` | Daemon | `watch_dirs = ["…"]` |
 | `~/.chronicle/daemon.lock` | Daemon | Singleton |
-| `/tmp/chronicle.sock` | IPC | Default socket |
+| `~/.chronicle/chronicle.sock` | IPC | Default socket |
 | `~/Library/LaunchAgents/com.chronicle.daemon.plist` | install | launchd |
 | `~/Library/Logs/chronicle.log` | launchd | stdout |
 | `~/.chronicle/hooks/` | hook install | zsh/fish scripts |
@@ -243,7 +243,7 @@ launchctl kickstart -k gui/$UID/com.chronicle.daemon
 - `cargo fmt --check`, `clippy -D warnings`, `cargo test` on Ubuntu + macOS
 - `bun run check` + `bun run build` on Ubuntu
 
-Release workflow builds Tauri artifacts on tag; Homebrew formula in `Formula/chronicle.rb`.
+Release workflow builds Tauri artifacts on tag; Homebrew cask in `Casks/chronicle.rb` (`brew tap aeswibon/chronicle && brew install --cask chronicle`).
 
 ---
 

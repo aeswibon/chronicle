@@ -26,9 +26,9 @@ First public release — local developer observability for macOS.
 - **Plugins** — manifest discovery under `~/.chronicle/plugins/`
 - **Standard-user setup** — per-user LaunchAgent, bundled daemon sidecar, auto-start on app launch (no admin password)
 - **CI** — Rust fmt/clippy/test on Ubuntu and macOS; frontend typecheck and build
-- **Release** — unsigned GitHub Release DMGs by default; optional signed + notarized builds with Apple Developer ID ([docs/07-release-macos.md](./docs/07-release-macos.md))
+- **Release** — signed + notarized GitHub Release DMGs (Developer ID); unsigned fallback when `MACOS_SIGNING_ENABLED` is off ([docs/07-release-macos.md](./docs/07-release-macos.md))
 - **Docs** — five-part architecture series, capture pipeline, clients, plugins, external integrations
-- **Homebrew cask** — `Formula/chronicle.rb` (DMG-based)
+- **Homebrew cask** — `Casks/chronicle.rb` (DMG-based tap install)
 
 ### Changed
 

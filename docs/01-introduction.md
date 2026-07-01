@@ -1,5 +1,7 @@
 # 1. Introduction
 
+<p align="center"><img src="../branding/icon.svg" alt="Chronicle" width="48" height="48"></p>
+
 [← Docs index](./README.md) · Next: [System design →](./02-system-design.md)
 
 ---

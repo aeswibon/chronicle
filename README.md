@@ -1,132 +1,168 @@
-# Chronicle
+<p align="center">
+  <img src="branding/logo.png" alt="Chronicle" width="96" height="96">
+</p>
 
-**Local-first developer observability** for macOS (collectors) with portable daemon, MCP, and UI.
+<h1 align="center">Chronicle</h1>
 
-## Platform status
+<p align="center">
+  <strong>Local-first developer observability for macOS</strong><br>
+  Remember what you were doing — across apps, repos, and terminals — without sending data to the cloud.
+</p>
 
-| Component | macOS | Linux / Windows |
-|-----------|-------|-----------------|
-| Daemon + SQLite + IPC | Yes | Yes |
-| Shell / git / filesystem collectors | Yes | Partial (no window focus) |
-| HTTP ingress (`:9713`) + extensions | Yes | Yes |
-| Tauri UI | Yes | Build from source |
-| launchd install | Yes | Use manual `chronicle-daemon start` |
-
-See [`plugins/README.md`](plugins/README.md) for plugin manifests and [`extensions/README.md`](extensions/README.md) for IDE/browser emitters.
-
-Chronicle automatically records what you were doing while coding — window focus, git operations, terminal commands, and meaningful file changes — and stores it in a local SQLite database. Browse timelines in a Tauri + Svelte desktop app, search your history, or query it from AI tools via MCP.
-
-> **Documentation:** [docs/README.md](docs/README.md) — five-part guide (introduction → system design → capture → storage → clients)
+<p align="center">
+  <a href="https://github.com/aeswibon/chronicle/releases"><img src="https://img.shields.io/github/v/release/aeswibon/chronicle?label=release&style=flat-square" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
+  <a href="https://github.com/aeswibon/chronicle/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/aeswibon/chronicle/ci.yml?branch=master&style=flat-square" alt="CI"></a>
+</p>
 
 ---
 
-## Why Chronicle?
+## Overview
 
-- **Remember context** — See which app, repo, and branch you were in hours ago.
-- **Search your work** — Full-text search over activity, not just git log.
-- **Project-aware** — Events grouped by git/cargo roots; per-project timelines.
-- **AI-ready** — `chronicle-mcp` exposes search, projects, and sessions to Cursor/Claude.
-- **Private by default** — No cloud, no keystrokes, no screenshots. Data stays in `~/.chronicle/`.
+Chronicle runs a background daemon that records structured activity — window focus, git operations, terminal commands, and meaningful file changes — into a local SQLite database. Browse timelines in a **Tauri + Svelte** desktop app, search your history, or query recent work from AI tools via **MCP**.
+
+| | |
+|---|---|
+| **Private** | Data stays in `~/.chronicle/` — no account, no telemetry |
+| **Project-aware** | Events grouped by git/Cargo roots |
+| **AI-ready** | `chronicle-mcp` for Cursor, Claude Desktop, and other MCP clients |
+| **macOS-native** | Collectors use FSEvents, git reflogs, and `lsappinfo` (no Accessibility prompt) |
 
 ---
 
-## Architecture (overview)
+## Architecture
 
-```
-┌──────────────┐     ┌──────────────────┐     ┌──────────────┐
-│  Tauri App   │◄───►│  chronicle-daemon│◄───►│  Collectors  │
-│  (Svelte 5)  │ UDS │  (Tokio/Rust)    │     │  (macOS)     │
-└──────────────┘     └───────┬──────────┘     └──────────────┘
-         ▲                   │
-┌────────┴────────┐ ┌───────▼─────────┐
-│  chronicle-mcp  │ │  chronicle-store │
-│  (stdio / AI)   │ │  (SQLite + FTS)  │
-└─────────────────┘ └─────────────────┘
+```mermaid
+flowchart TB
+  subgraph sources["Signal sources"]
+    WF["Window focus"]
+    GIT["Git reflogs"]
+    FS["Filesystem"]
+    SH["Shell hook"]
+    HTTP["HTTP ingress"]
+  end
+
+  subgraph daemon["chronicle-daemon"]
+    COL["Collectors"]
+    FILT["Filter + label"]
+    SPAN["Span processor"]
+    IPC["Unix socket IPC"]
+  end
+
+  subgraph persistence["chronicle-store"]
+    DB[("SQLite + FTS5<br/>~/.chronicle/chronicle.db")]
+  end
+
+  subgraph clients["Clients"]
+    UI["Tauri desktop app"]
+    MCP["chronicle-mcp"]
+    CLI["CLI / extensions"]
+  end
+
+  sources --> COL
+  COL --> FILT --> SPAN --> DB
+  FILT --> IPC
+  IPC <--> UI
+  IPC <--> MCP
+  IPC <--> CLI
 ```
 
-| Component | Role |
-|-----------|------|
-| `chronicle-core` | Canonical event schema, spans, sessions |
-| `chronicle-ipc` | JSON over Unix domain sockets |
-| `chronicle-store` | SQLite persistence + FTS5 search |
+| Crate / binary | Role |
+|----------------|------|
+| `chronicle-core` | Event schema, spans, sessions |
+| `chronicle-store` | SQLite persistence and FTS search |
+| `chronicle-ipc` | Length-prefixed JSON over Unix domain socket |
 | `chronicle-daemon` | Collectors, filtering, launchd service |
 | `chronicle-mcp` | MCP tools for AI assistants |
-| `src-tauri` + `src/` | Desktop UI |
+| `src-tauri` + `src/` | Desktop UI (Svelte 5) |
 
-Full design: **[docs/README.md](docs/README.md)** (start with [Introduction](docs/01-introduction.md))
+Deep dive: **[Documentation](docs/README.md)** · start with [Introduction](docs/01-introduction.md)
 
 ---
 
-## Quick start
+## Install
+
+### macOS (recommended)
+
+Signed, notarized DMGs are on **[GitHub Releases](https://github.com/aeswibon/chronicle/releases)**:
+
+1. Download **arm64** (Apple Silicon) or **x64** (Intel)
+2. Drag **Chronicle** to Applications
+3. Launch — the background service starts automatically
+4. Optional: **Settings → Install shell hook** for terminal capture
+
+### Build from source
 
 ```bash
-# Build
-cargo build --release -p chronicle-daemon -p chronicle-mcp
+git clone https://github.com/aeswibon/chronicle.git
+cd chronicle
 bun install
+cargo build --release -p chronicle-daemon -p chronicle-mcp
 
-# Install background daemon (add your code directories)
 ./target/release/chronicle-daemon install --watch ~/Developer
-launchctl load ~/Library/LaunchAgents/com.chronicle.daemon.plist
-
-# Optional: shell hook for terminal commands
-./target/release/chronicle-daemon hook --shell zsh
-
-# Status + UI
-./target/release/chronicle-daemon status
 bun run tauri dev
 ```
 
-Configure watch paths in the app under **Settings**, or edit `~/.chronicle/config.toml`.
+Configure watch directories in **Settings** or `~/.chronicle/config.toml`.
 
-### GitHub Releases (unsigned)
-
-Pre-built DMGs are published on [Releases](https://github.com/aeswibon/chronicle/releases). They are **not** Apple-notarized (no $99/year developer account). On first launch, macOS may block the app — **right-click Chronicle.app → Open**, or run:
+### Homebrew
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/Chronicle.app
+brew tap aeswibon/chronicle
+brew install --cask chronicle
 ```
 
-See [docs/07-release-macos.md](docs/07-release-macos.md) for details and signed-release setup.
+The cask lives in this repo under `Casks/` (not `Formula/` — Homebrew expects casks in a tap's `Casks` directory).
 
 ---
 
-## Collectors
+## Features
 
-| Collector | Emits | Notes |
-|-----------|-------|-------|
-| Window focus | `process.focus` | App name, bundle ID, window title |
-| Filesystem | `file.created` / `file.deleted` | Source files under watch dirs; ignores `node_modules`, `target`, … |
-| Git | `commit.created`, `branch.checkout`, … | Watches reflogs under discovered repos |
-| Shell | `command.completed` / `command.failed` | UDP hook on `127.0.0.1:9712` (zsh, bash, fish) |
+| Area | What Chronicle captures |
+|------|-------------------------|
+| **Timeline** | Chronological activity with labels and highlights |
+| **Projects** | Per-repo views, sorted by last activity |
+| **Sessions** | Rule-based daily rollups; optional AI summaries |
+| **Search** | FTS over events, projects, and metadata |
+| **MCP** | `search_events`, `get_timeline`, `list_projects`, `get_project_context`, … |
+| **Privacy** | Collector toggles, retention prune, shell secret redaction |
 
-Each collector can be disabled in **Settings** or `~/.chronicle/config.toml`. See [capture pipeline](docs/03-capture-pipeline.md#collector-opt-in).
-
-Extensions can emit events via [`emit_event`](docs/06-external-plugins.md) (UDS) — same pipeline as collectors.
+Collectors can be disabled individually in Settings. See the [capture pipeline](docs/03-capture-pipeline.md) for details.
 
 ---
 
-## MCP (AI tools)
+## MCP setup
 
-Build and register in your MCP client:
+Register `chronicle-mcp` in your MCP client (daemon must be running):
 
 ```json
-"chronicle": {
-  "command": "/path/to/chronicle-mcp",
-  "args": []
+{
+  "chronicle": {
+    "command": "/path/to/chronicle-mcp",
+    "args": []
+  }
 }
 ```
 
-Tools: `chronicle_status`, `search_events`, `list_projects`, `get_timeline`, `get_project_context`, `get_recent_errors`. Requires the daemon to be running.
+---
+
+## Platform support
+
+| Component | macOS | Linux / Windows |
+|-----------|:-----:|:---------------:|
+| Daemon + SQLite + IPC | ✓ | ✓ |
+| Shell / git / filesystem collectors | ✓ | Partial |
+| Window focus collector | ✓ | — |
+| Tauri desktop UI | ✓ | Build from source |
+| launchd auto-start | ✓ | Manual `chronicle-daemon start` |
 
 ---
 
 ## Privacy
 
-- **No** keystrokes, clipboard, screenshots, audio, or video.
-- **Yes** app names, window titles, shell commands, git messages, file paths (not contents).
-- All data local unless you add sync later (not implemented).
+Chronicle does **not** record keystrokes, clipboard, screenshots, audio, or video. It **does** record app names, window titles, shell commands, git messages, and file paths (not file contents). Everything stays on disk unless you add sync yourself.
 
-Details: [Introduction — Privacy](docs/01-introduction.md) and [Capture pipeline](docs/03-capture-pipeline.md#what-is-not-captured)
+→ [Privacy details](docs/01-introduction.md#privacy-and-control)
 
 ---
 
@@ -137,10 +173,24 @@ cargo test --workspace
 bun run check
 ```
 
-See **[docs/05-clients-and-development.md](docs/05-clients-and-development.md)** for repo layout, adding collectors, and IPC extensions.
+→ [Clients and development](docs/05-clients-and-development.md) · [Contributing collectors](docs/03-capture-pipeline.md)
+
+---
+
+## Documentation
+
+| Guide | Topic |
+|-------|-------|
+| [Introduction](docs/01-introduction.md) | What Chronicle is and who it's for |
+| [System design](docs/02-system-design.md) | Processes, crates, deployment |
+| [Capture pipeline](docs/03-capture-pipeline.md) | Collectors, filtering, spans |
+| [Storage and query](docs/04-storage-and-query.md) | Schema, FTS, query APIs |
+| [Clients and development](docs/05-clients-and-development.md) | IPC, MCP, UI, contributing |
+| [External plugins](docs/06-external-plugins.md) | IDE and browser extensions |
+| [macOS release signing](docs/07-release-macos.md) | Signed DMGs and CI setup |
 
 ---
 
 ## License
 
-MIT
+[MIT](LICENSE)

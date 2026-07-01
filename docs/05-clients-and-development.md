@@ -8,7 +8,7 @@
 
 ### Transport
 
-- **Socket:** Unix domain socket (default `/tmp/chronicle.sock`)
+- **Socket:** Unix domain socket (default `~/.chronicle/chronicle.sock`)
 - **Framing:** 4-byte big-endian length prefix + UTF-8 JSON body
 - **Max response:** 16 MiB (client-side guard)
 
@@ -94,7 +94,7 @@ Similarly tagged:
 | `resolve_app_icon` | Local macOS (no IPC) |
 | `resolve_path_icons` | Local macOS batch |
 
-`DaemonState` holds `socket_path: "/tmp/chronicle.sock"`.
+`DaemonState` holds `socket_path: "~/.chronicle/chronicle.sock"`.
 
 ### Frontend routes
 
@@ -128,7 +128,7 @@ bun run tauri dev
 
 ```bash
 cargo build --release -p chronicle-mcp
-./target/release/chronicle-mcp --socket /tmp/chronicle.sock
+./target/release/chronicle-mcp --socket ~/.chronicle/chronicle.sock
 ```
 
 Speaks MCP over **stdio** (`rmcp` + `transport-io`). Logs go to stderr.
@@ -273,7 +273,7 @@ Use a small Rust test binary or `nc -U` won't work for length-prefixed JSON — 
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.chronicle.daemon.plist 2>/dev/null
-rm -f ~/.chronicle/chronicle.db /tmp/chronicle.sock ~/.chronicle/daemon.lock
+rm -f ~/.chronicle/chronicle.db ~/.chronicle/chronicle.sock ~/.chronicle/daemon.lock
 cargo run -p chronicle-daemon -- start --watch ~/Developer
 ```
 

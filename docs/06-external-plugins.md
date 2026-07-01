@@ -20,7 +20,7 @@ Browser extensions use **HTTP** `POST http://127.0.0.1:9713/v1/events` with a `C
 
 ## `emit_event` IPC
 
-**Request** (length-prefixed JSON over `/tmp/chronicle.sock`):
+**Request** (length-prefixed JSON over `~/.chronicle/chronicle.sock`):
 
 ```json
 {

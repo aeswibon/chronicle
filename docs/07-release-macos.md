@@ -1,136 +1,69 @@
-# 7. macOS release signing and notarization
+# 7. macOS release signing
 
 [← External plugins](./06-external-plugins.md) · [Docs index](./README.md)
 
-Chronicle can ship **unsigned** release DMGs (free, Gatekeeper workaround required) or **signed + notarized** DMGs (Apple Developer Program, seamless install).
+Official [GitHub Releases](https://github.com/aeswibon/chronicle/releases) ship **signed and notarized** DMGs when repository variable `MACOS_SIGNING_ENABLED` is `true`.
 
-## Unsigned releases (default, $0)
+## Signed releases (default for this repo)
 
-Set repository variable **`MACOS_SIGNING_ENABLED`** to anything other than `true` (or leave it unset). CI builds ad-hoc DMGs without Apple certificates.
-
-### What users see
-
-macOS Gatekeeper may show “Chronicle is damaged” or “unidentified developer” on first open. The app is fine — Apple blocks unsigned downloads by default.
-
-### First-launch workaround (include in release notes)
-
-**Option A — Right-click**
-
-1. Download the DMG → drag Chronicle to Applications
-2. Right-click **Chronicle.app** → **Open** → **Open** again
-
-**Option B — Terminal**
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Chronicle.app
-open /Applications/Chronicle.app
-```
-
-After the first successful launch, macOS remembers the choice.
-
-### Build from source (no Gatekeeper)
-
-```bash
-git clone https://github.com/aeswibon/chronicle.git
-cd chronicle
-bun install
-cargo build --release -p chronicle-daemon
-bun run tauri dev   # or: bun run tauri build
-```
-
----
-
-## Signed releases ($99/year Apple Developer Program)
-
-For DMGs that open with a normal double-click (no Gatekeeper friction), enable signing.
+Users install with a normal double-click — no Gatekeeper workaround.
 
 ### Requirements
 
 - [Apple Developer Program](https://developer.apple.com/programs/) membership
 - **Developer ID Application** certificate (not “Apple Development”)
-- GitHub secrets configured (see below)
-- Repository variable **`MACOS_SIGNING_ENABLED`** = `true`
+- App-specific password for notarization
 
-### One-time: export your certificate
+### GitHub configuration
 
-1. Open **Keychain Access** → **My Certificates**
-2. Find **Developer ID Application: Your Name (TEAMID)**
-3. Right-click → **Export** → save as `chronicle-codesign.p12` with a strong password
-4. Encode for GitHub:
+| Type | Name |
+|------|------|
+| Variable | `MACOS_SIGNING_ENABLED` = `true` |
+| Secret | `APPLE_CERTIFICATE` (base64 `.p12`) |
+| Secret | `APPLE_CERTIFICATE_PASSWORD` |
+| Secret | `APPLE_SIGNING_IDENTITY` |
+| Secret | `APPLE_ID` |
+| Secret | `APPLE_PASSWORD` (app-specific) |
+| Secret | `APPLE_TEAM_ID` |
+| Secret | `KEYCHAIN_PASSWORD` |
 
-```bash
-base64 -i chronicle-codesign.p12 | pbcopy
-```
-
-Paste into the `APPLE_CERTIFICATE` secret (single line, no spaces).
-
-### GitHub secrets
-
-| Secret | Value |
-|--------|--------|
-| `APPLE_CERTIFICATE` | Base64 of the `.p12` file |
-| `APPLE_CERTIFICATE_PASSWORD` | Password used when exporting `.p12` |
-| `APPLE_SIGNING_IDENTITY` | Full name, e.g. `Developer ID Application: Jane Doe (AB12CD34EF)` |
-| `APPLE_ID` | Apple ID email |
-| `APPLE_PASSWORD` | [App-specific password](https://appleid.apple.com/account/manage) |
-| `APPLE_TEAM_ID` | 10-character team ID from [Membership details](https://developer.apple.com/account) |
-| `KEYCHAIN_PASSWORD` | Any random string (CI temporary keychain only) |
-
-Find signing identity locally:
+Export certificate:
 
 ```bash
-security find-identity -v -p codesigning
+base64 -i chronicle-codesign.p12 | pbcopy   # paste into APPLE_CERTIFICATE
+security find-identity -v -p codesigning    # copy identity for APPLE_SIGNING_IDENTITY
 ```
 
-### Repository variable
+Push a version tag (`v*`) to trigger the [Release workflow](../.github/workflows/release.yml). Notes are generated from `CHANGELOG.md`.
 
-Settings → Secrets and variables → Actions → **Variables**:
+## Unsigned releases (forks)
 
-| Variable | Value |
-|----------|--------|
-| `MACOS_SIGNING_ENABLED` | `true` |
+Set `MACOS_SIGNING_ENABLED` to anything other than `true` (or leave unset). CI builds ad-hoc DMGs.
 
-### Local test before tagging
-
-Unsigned `tauri build` uses **adhoc / linker signing** — `spctl` will report errors like `code has no resources but signature indicates they must be present`. That is expected without a Developer ID.
-
-For a real signed + notarized local build, import your `.p12` into Keychain, then:
+**First launch workaround:**
 
 ```bash
-export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
-export APPLE_ID="you@example.com"
-export APPLE_PASSWORD="xxxx-xxxx-xxxx-xxxx"   # app-specific password
-export APPLE_TEAM_ID="AB12CD34EF"
-
-bun run tauri build --target aarch64-apple-darwin
-spctl -a -vv src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Chronicle.app
+xattr -dr com.apple.quarantine /Applications/Chronicle.app
 ```
 
-`spctl` should report `accepted` and `source=Notarized Developer ID`.
+Or right-click **Chronicle.app → Open** once.
 
----
+## Local builds
 
-## Cut a release
-
-1. Update `CHANGELOG.md` with a `## [x.y.z]` section
-2. Commit and push to `master`
-3. Tag and push:
+`bun run tauri dev` and unsigned `tauri build` work for development. Ad-hoc signatures fail `spctl` — expected without Developer ID env vars:
 
 ```bash
-git tag -a v0.1.0 -m "Chronicle v0.1.0"
-git push origin v0.1.0
+export APPLE_SIGNING_IDENTITY="Developer ID Application: …"
+export APPLE_ID=…
+export APPLE_TEAM_ID=…
+export APPLE_PASSWORD=…
+bun run tauri build
 ```
 
-The **Release** workflow builds arm64 + x64 DMGs and publishes GitHub Release notes from `CHANGELOG.md` (with unsigned or signed install instructions as appropriate).
+## Troubleshooting
 
-## Troubleshooting CI
-
-| Error | Fix |
+| Issue | Fix |
 |-------|-----|
-| `failed to import keychain certificate` | Re-export `.p12`; ensure base64 is one line; or use unsigned mode (`MACOS_SIGNING_ENABLED` ≠ `true`) |
-| Notarization timeout | Ensure `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` are correct |
-| Gatekeeper blocks unsigned DMG | Expected — use right-click Open or `xattr` (see above) |
-
-## Unsigned local dev builds
-
-`bun run tauri dev` and local `tauri build` without signing work fine for development on your own Mac.
+| `failed to import keychain certificate` | Re-export `.p12`; ensure base64 is one line |
+| Notarization timeout | Retry; check Apple status page |
+| Gatekeeper on unsigned DMG | Use `xattr` or right-click Open (see above) |

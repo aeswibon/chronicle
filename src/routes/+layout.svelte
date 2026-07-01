@@ -43,7 +43,10 @@
 
 <div class="min-h-screen bg-[var(--bg)] text-[var(--text)] flex flex-col">
   <nav class="border-b border-[var(--border)] px-6 py-0 flex items-center gap-6 h-12 shrink-0 bg-[var(--bg-elevated)]">
-    <h1 class="text-sm font-semibold text-[var(--accent)] tracking-wide">chronicle</h1>
+    <a href="/" class="flex items-center gap-2 shrink-0">
+      <img src="/icon.svg" alt="" width="20" height="20" class="rounded-md" />
+      <span class="text-sm font-semibold text-[var(--accent)] tracking-wide">Chronicle</span>
+    </a>
     <div class="flex items-center h-full gap-1">
       {#each navItems as item}
         <a
