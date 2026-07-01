@@ -13,6 +13,7 @@ pub struct CaptureStatusSnapshot {
 }
 
 impl CaptureStatusSnapshot {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn to_ipc(&self) -> MacosCaptureStatus {
         MacosCaptureStatus {
             monitor_running: self.monitor_running,
@@ -31,6 +32,7 @@ pub struct CaptureStatus {
 }
 
 impl CaptureStatus {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn seed_permissions(&self, permissions: CapturePermissions) {
         if let Ok(mut g) = self.inner.lock() {
             g.permissions = permissions;
@@ -58,6 +60,7 @@ impl CaptureStatus {
         }
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn snapshot(&self) -> CaptureStatusSnapshot {
         self.inner.lock().map(|g| g.clone()).unwrap_or_default()
     }

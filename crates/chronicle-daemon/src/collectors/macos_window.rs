@@ -23,6 +23,7 @@ pub fn window_title_for_pid(pid: i32) -> Option<String> {
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]
 pub fn window_title_for_pid(_pid: i32) -> Option<String> {
     None
 }

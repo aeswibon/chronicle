@@ -375,7 +375,9 @@ async fn handle_connection(
     event_tx: mpsc::Sender<CanonicalEvent>,
     pipeline: Arc<Mutex<PipelineState>>,
     focus_ctx: Arc<FocusContext>,
-    capture_status: Arc<CaptureStatus>,
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] capture_status: Arc<
+        CaptureStatus,
+    >,
 ) {
     match conn.read_request().await {
         Ok(req) => match req {

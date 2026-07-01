@@ -84,6 +84,7 @@ fn spawn_helper(helper: &Path, args: &[&str]) -> std::io::Result<std::process::C
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]
 fn spawn_helper(helper: &Path, args: &[&str]) -> std::io::Result<std::process::Child> {
     let mut cmd = Command::new(helper);
     for arg in args {
@@ -93,6 +94,7 @@ fn spawn_helper(helper: &Path, args: &[&str]) -> std::io::Result<std::process::C
 }
 
 /// Copy the build-time helper next to the running daemon binary (release install).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn install_helper_beside_daemon() -> std::io::Result<PathBuf> {
     let src = built_helper_path().ok_or_else(|| {
         std::io::Error::new(
@@ -116,6 +118,7 @@ pub fn install_helper_beside_daemon() -> std::io::Result<PathBuf> {
     Ok(dest)
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn query_permissions() -> Option<CapturePermissions> {
     let helper = helper_path()?;
     let output = run_helper(&helper, &["permissions"]).ok()?;
@@ -165,6 +168,7 @@ pub async fn spawn_monitor() -> Option<tokio::process::Child> {
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn request_accessibility_prompt() -> bool {
     let Some(helper) = helper_path() else {
         return false;
