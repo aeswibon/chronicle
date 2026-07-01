@@ -243,7 +243,13 @@ launchctl kickstart -k gui/$UID/com.chronicle.daemon
 - `cargo fmt --check`, `clippy -D warnings`, `cargo test` on Ubuntu + macOS
 - `bun run check` + `bun run build` on Ubuntu
 
-Release workflow builds Tauri artifacts on tag; Homebrew cask in `Casks/chronicle.rb` (`brew tap aeswibon/chronicle && brew install --cask chronicle`).
+Release workflow builds Tauri artifacts on tag; Homebrew cask in `Casks/chronicle.rb`:
+
+```bash
+brew tap aeswibon/chronicle https://github.com/aeswibon/chronicle
+brew trust aeswibon/chronicle
+brew install --cask chronicle
+```
 
 ---
 
