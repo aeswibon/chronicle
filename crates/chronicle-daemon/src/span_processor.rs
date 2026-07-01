@@ -114,5 +114,7 @@ fn is_agent_app(event: &CanonicalEvent) -> bool {
         "opencode",
         "antigravity",
     ];
-    AGENT_APPS.iter().any(|needle| app.contains(needle) || bundle.contains(needle))
+    AGENT_APPS
+        .iter()
+        .any(|needle| app.contains(needle) || bundle.contains(needle))
 }

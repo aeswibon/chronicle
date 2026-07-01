@@ -201,9 +201,11 @@ fn file_basename(path: &str) -> String {
 
 fn is_agent_app_name(app: &str) -> bool {
     let lower = app.to_lowercase();
-    ["cursor", "claude", "codex", "gemini", "windsurf", "copilot", "aider", "opencode"]
-        .iter()
-        .any(|n| lower.contains(n))
+    [
+        "cursor", "claude", "codex", "gemini", "windsurf", "copilot", "aider", "opencode",
+    ]
+    .iter()
+    .any(|n| lower.contains(n))
 }
 
 #[cfg(test)]
