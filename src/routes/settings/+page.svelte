@@ -5,12 +5,51 @@
   import { theme, setTheme } from '$lib/theme.svelte.js';
 
   let status = $state(null);
+  let watchDirs = $state('');
+  let configMessage = $state('');
+  let hookMessage = $state('');
+  let saving = $state(false);
+  let installingHook = $state(false);
 
   onMount(async () => {
     try {
       status = await invoke('get_status');
     } catch {}
+    try {
+      const cfg = await invoke('get_config');
+      watchDirs = (cfg.watch_dirs ?? []).join('\n');
+    } catch {}
   });
+
+  async function saveWatchDirs() {
+    saving = true;
+    configMessage = '';
+    try {
+      const dirs = watchDirs
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      await invoke('set_config', { watchDirs: dirs });
+      configMessage = 'Saved. Restart the daemon for watch directories to take effect.';
+    } catch (e) {
+      configMessage = String(e);
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function installHook() {
+    installingHook = true;
+    hookMessage = '';
+    try {
+      await invoke('install_shell_hook', { shell: 'zsh' });
+      hookMessage = 'Shell hook installed. Restart your terminal or run: source ~/.zshrc';
+    } catch (e) {
+      hookMessage = String(e);
+    } finally {
+      installingHook = false;
+    }
+  }
 
   const themeOptions = /** @type {const} */ ([
     { value: 'system', label: 'System' },
@@ -19,15 +58,49 @@
   ]);
 </script>
 
-<PageShell title="Settings" description="Appearance and daemon connection details.">
+<PageShell title="Settings" description="Capture paths, shell hook, and appearance.">
+  <section class="mb-8">
+    <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Watch directories</h3>
+    <p class="text-sm text-[var(--text-secondary)] leading-relaxed mb-3">
+      Git and filesystem collectors scan these paths for repositories (one per line).
+    </p>
+    <textarea
+      bind:value={watchDirs}
+      rows="4"
+      placeholder="/Volumes/Seagate/developer&#10;~/Developer"
+      class="w-full text-xs font-mono bg-[var(--bg-muted)] border border-[var(--border)] rounded-lg px-4 py-3 text-[var(--text)] resize-y"
+    ></textarea>
+    <div class="flex items-center gap-3 mt-3">
+      <button
+        type="button"
+        onclick={saveWatchDirs}
+        disabled={saving}
+        class="px-4 py-2 text-sm rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+      >
+        {saving ? 'Saving…' : 'Save watch dirs'}
+      </button>
+      {#if configMessage}
+        <p class="text-xs text-[var(--text-muted)]">{configMessage}</p>
+      {/if}
+    </div>
+  </section>
+
   <section class="mb-8">
     <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Shell hook</h3>
     <p class="text-sm text-[var(--text-secondary)] leading-relaxed">
-      Install the terminal hook to record commands (UDP <code class="font-mono text-xs">127.0.0.1:9712</code>).
+      Records terminal commands via UDP <code class="font-mono text-xs">127.0.0.1:9712</code>.
     </p>
-    <code class="block mt-3 text-xs font-mono text-[var(--text-muted)] bg-[var(--bg-muted)] rounded-lg px-4 py-3">
-      chronicle-daemon hook --shell zsh
-    </code>
+    <button
+      type="button"
+      onclick={installHook}
+      disabled={installingHook}
+      class="mt-3 px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 transition-colors disabled:opacity-50"
+    >
+      {installingHook ? 'Installing…' : 'Install zsh hook'}
+    </button>
+    {#if hookMessage}
+      <p class="text-xs text-[var(--text-muted)] mt-2">{hookMessage}</p>
+    {/if}
   </section>
 
   <section class="mb-8">
@@ -80,7 +153,7 @@
         <div class="px-5 py-16 text-center">
           <p class="text-sm text-[var(--text-secondary)]">Daemon not connected.</p>
           <p class="text-xs text-[var(--text-muted)] mt-2">
-            Start with <code class="text-[var(--accent)] font-mono">chronicle start</code>
+            Start with <code class="text-[var(--accent)] font-mono">chronicle-daemon start</code>
           </p>
         </div>
       {/if}

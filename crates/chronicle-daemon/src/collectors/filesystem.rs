@@ -9,7 +9,6 @@ use tracing::{debug, error, info, warn};
 
 use crate::project;
 
-const DEFAULT_WATCH_DIRS: &[&str] = &["~/Developer", "~/Desktop", "~/Documents"];
 const FS_DEBOUNCE: Duration = Duration::from_secs(3);
 
 const IGNORED_DIR_NAMES: &[&str] = &[
@@ -61,14 +60,7 @@ pub struct FilesystemCollector {
 
 impl FilesystemCollector {
     pub fn new(dirs: Option<Vec<PathBuf>>) -> Self {
-        let watch_dirs = dirs.unwrap_or_else(|| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-            DEFAULT_WATCH_DIRS
-                .iter()
-                .map(|d| PathBuf::from(d.replace('~', &home)))
-                .filter(|p| p.exists())
-                .collect()
-        });
+        let watch_dirs = dirs.unwrap_or_else(|| crate::watch_dirs::resolve_watch_dirs(&[]));
         Self { watch_dirs }
     }
 

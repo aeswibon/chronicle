@@ -16,9 +16,15 @@ impl GitCollector {
     }
 
     fn find_git_logs(&self) -> Vec<PathBuf> {
+        let roots = if self.watch_dirs.is_empty() {
+            crate::watch_dirs::resolve_watch_dirs(&[])
+        } else {
+            self.watch_dirs.clone()
+        };
+        let repos = crate::project_bootstrap::discover_repo_paths(&roots);
         let mut logs = Vec::new();
-        for dir in &self.watch_dirs {
-            let git_dir = dir.join(".git");
+        for repo in repos {
+            let git_dir = repo.join(".git");
             let reflog = git_dir.join("logs").join("HEAD");
             if reflog.exists() {
                 logs.push(reflog);

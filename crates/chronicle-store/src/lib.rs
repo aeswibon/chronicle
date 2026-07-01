@@ -227,6 +227,112 @@ impl Store {
         rows.collect()
     }
 
+    pub fn query_project_by_name(&self, name: &str) -> SqlResult<Option<ProjectRecord>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT name, path, last_active, language FROM projects WHERE name = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![name], |row| {
+            Ok(ProjectRecord {
+                name: row.get(0)?,
+                path: row.get(1)?,
+                last_active: row.get(2)?,
+                language: row.get(3)?,
+            })
+        })?;
+        rows.next().transpose()
+    }
+
+    pub fn query_spans_for_project(
+        &self,
+        project: &str,
+        since: i64,
+        limit: u32,
+    ) -> SqlResult<Vec<Span>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, trace_id, parent_id, span_type, project, started_at, ended_at, duration_ms, event_count, metadata
+             FROM spans WHERE project = ?1 AND started_at >= ?2
+             ORDER BY started_at DESC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![project, since, limit], |row| {
+            let parent_id: Option<String> = row.get(2)?;
+            Ok(Span {
+                id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                trace_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
+                parent_id: parent_id.and_then(|s| s.parse().ok()),
+                span_type: serde_json::from_str(&row.get::<_, String>(3)?)
+                    .unwrap_or(chronicle_core::SpanType::Idle),
+                project: row.get(4)?,
+                started_at: row.get(5)?,
+                ended_at: row.get(6)?,
+                duration_ms: row.get(7)?,
+                event_count: row.get(8)?,
+                metadata: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn query_activity_events_for_project(
+        &self,
+        project: &str,
+        since: i64,
+        until: Option<i64>,
+        limit: u32,
+    ) -> SqlResult<Vec<CanonicalEvent>> {
+        let until = until.unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, timestamp, source, category, type, project, workspace, duration_ms, metadata
+             FROM events WHERE project = ?1 AND timestamp >= ?2 AND timestamp <= ?3
+             AND (
+               category IN ('\"os\"', '\"shell\"', '\"git\"')
+               OR type IN ('file.created', 'file.deleted')
+             )
+             AND type NOT IN ('git.other', 'file.modified')
+             ORDER BY timestamp DESC LIMIT ?4",
+        )?;
+        let rows = stmt.query_map(params![project, since, until, limit], |row| {
+            let metadata_str: String = row.get(8)?;
+            Ok(CanonicalEvent {
+                id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                timestamp: row.get(1)?,
+                source: row.get(2)?,
+                category: serde_json::from_str(&row.get::<_, String>(3)?)
+                    .unwrap_or(chronicle_core::EventCategory::Os),
+                r#type: row.get(4)?,
+                project: row.get(5)?,
+                workspace: row.get(6)?,
+                duration_ms: row.get(7)?,
+                metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
+                version: "1.0".into(),
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn query_span_by_id(&self, id: &str) -> SqlResult<Option<Span>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, trace_id, parent_id, span_type, project, started_at, ended_at, duration_ms, event_count, metadata
+             FROM spans WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![id], |row| {
+            let parent_id: Option<String> = row.get(2)?;
+            Ok(Span {
+                id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                trace_id: row.get::<_, String>(1)?.parse().unwrap_or_default(),
+                parent_id: parent_id.and_then(|s| s.parse().ok()),
+                span_type: serde_json::from_str(&row.get::<_, String>(3)?)
+                    .unwrap_or(chronicle_core::SpanType::Idle),
+                project: row.get(4)?,
+                started_at: row.get(5)?,
+                ended_at: row.get(6)?,
+                duration_ms: row.get(7)?,
+                event_count: row.get(8)?,
+                metadata: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
+            })
+        })?;
+        rows.next().transpose()
+    }
+
     pub fn count_events(&self) -> SqlResult<u64> {
         let count: u64 = self
             .conn

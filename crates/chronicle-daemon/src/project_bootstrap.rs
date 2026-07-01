@@ -6,22 +6,27 @@ use tracing::info;
 const DEFAULT_WATCH_DIRS: &[&str] = &["~/Developer", "~/Desktop", "~/Documents"];
 const MAX_SCAN_DEPTH: usize = 4;
 
-/// Discover git/cargo repos on disk (no DB access — safe to run on a blocking thread).
-pub fn discover_repos(watch_dirs: &[PathBuf]) -> Vec<(String, String)> {
-    let mut dirs = if watch_dirs.is_empty() {
-        default_watch_dirs()
-    } else {
-        watch_dirs.to_vec()
-    };
-    dirs.extend(extra_watch_dirs_from_env());
-
+/// Discover git/cargo repo roots under the given directories.
+pub fn discover_repo_paths(watch_dirs: &[PathBuf]) -> Vec<PathBuf> {
     let mut repos = Vec::new();
-    for dir in &dirs {
+    for dir in watch_dirs {
         if dir.is_dir() {
             scan_tree_collect(dir, 0, &mut repos);
         }
     }
     repos
+}
+
+/// Discover git/cargo repos on disk (no DB access — safe to run on a blocking thread).
+pub fn discover_repos(watch_dirs: &[PathBuf]) -> Vec<(String, String)> {
+    discover_repo_paths(watch_dirs)
+        .into_iter()
+        .filter_map(|path| {
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .map(|name| (name, path.to_string_lossy().to_string()))
+        })
+        .collect()
 }
 
 /// Fast path: prune junk rows and upsert from recent events only.
@@ -51,7 +56,7 @@ pub fn apply_discovered_repos(store: &Store, repos: &[(String, String)]) -> usiz
     count
 }
 
-fn extra_watch_dirs_from_env() -> Vec<PathBuf> {
+pub fn extra_watch_dirs_from_env() -> Vec<PathBuf> {
     std::env::var("CHRONICLE_WATCH")
         .ok()
         .map(|raw| {
@@ -131,15 +136,13 @@ fn is_repo_path(path: &Path) -> bool {
     path.is_absolute() && (path.join(".git").exists() || path.join("Cargo.toml").exists())
 }
 
-fn scan_tree_collect(dir: &Path, depth: usize, out: &mut Vec<(String, String)>) {
+fn scan_tree_collect(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     if depth > MAX_SCAN_DEPTH {
         return;
     }
 
     if is_repo_path(dir) {
-        if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
-            out.push((name.to_string(), dir.to_string_lossy().to_string()));
-        }
+        out.push(dir.to_path_buf());
         return;
     }
 

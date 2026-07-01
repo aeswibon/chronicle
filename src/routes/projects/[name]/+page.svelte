@@ -1,75 +1,92 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
+  import { page } from '$app/stores';
   import PageShell from '$lib/components/PageShell.svelte';
+  import ProjectIcon from '$lib/components/ProjectIcon.svelte';
+  import AppIcon from '$lib/components/AppIcon.svelte';
+  import { preloadPathIcons } from '$lib/appIcons.js';
   import {
     collapseTimelineEvents,
     eventCategoryLabel,
     eventLabel,
     eventSubtitle,
-    formatTime,
+    formatDateTime,
     formatDuration,
+    formatTime,
   } from '$lib/format.js';
-  import AppIcon from '$lib/components/AppIcon.svelte';
 
-  let events = $state([]);
+  let projectName = $derived(decodeURIComponent($page.params.name ?? ''));
+  let project = $state(null);
   let spans = $state([]);
-  let status = $state(null);
+  let events = $state([]);
+  let loading = $state(true);
   let error = $state('');
+  /** @type {string | null} */
+  let iconUrl = $state(null);
 
-  async function loadSpans() {
-    const since = Date.now() - 86400000;
+  async function load() {
+    loading = true;
+    error = '';
     try {
-      const [evts, spns, st] = await Promise.all([
-        invoke('get_events', { since, until: null, limit: 50 }),
-        invoke('get_timeline', { since, until: null, limit: 20 }),
-        invoke('get_status'),
-      ]);
-      events = evts;
-      spans = spns;
-      status = st;
-      error = '';
+      const since = Date.now() - 7 * 86400000;
+      const ctx = await invoke('get_project_context', {
+        project: projectName,
+        since,
+        limit: 50,
+      });
+      project = ctx.project;
+      spans = ctx.spans;
+      events = ctx.events;
+      if (project?.path) {
+        preloadPathIcons([project.path])
+          .then((urls) => {
+            iconUrl = urls[project.path] ?? null;
+          })
+          .catch(() => {});
+      }
     } catch (e) {
-      error = `Connection failed: ${e}`;
+      error = String(e);
+    } finally {
+      loading = false;
     }
   }
 
   let feed = $derived(collapseTimelineEvents(events));
 
   onMount(() => {
-    loadSpans();
-    invoke('start_event_stream').catch(() => {});
-
-    let unlisten = () => {};
-    listen('chronicle-event', (e) => {
-      const event = e.payload;
-      events = [event, ...events.filter((x) => x.id !== event.id)].slice(0, 50);
-      if (status) status = { ...status, events_count: status.events_count + 1 };
-    }).then((fn) => {
-      unlisten = fn;
-    });
-
-    const interval = setInterval(loadSpans, 30_000);
-    return () => {
-      unlisten();
-      clearInterval(interval);
-    };
+    load();
   });
 </script>
 
 <PageShell
-  title="Timeline"
-  description={status ? `${status.events_count} events recorded · v${status.version}` : 'Your recent activity and sessions.'}
+  title={projectName}
+  description={project?.path ?? 'Project activity and sessions.'}
 >
-  {#if error}
-    <div class="text-center py-20 rounded-xl border border-dashed border-[var(--border)]">
-      <p class="text-sm text-[var(--text-secondary)] mb-1">{error}</p>
-      <p class="text-xs text-[var(--text-muted)]">
-        Make sure the daemon is running: <code class="text-[var(--accent)] font-mono">chronicle start</code>
-      </p>
+  <div class="mb-6">
+    <a href="/projects" class="text-xs text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors">
+      ← Projects
+    </a>
+  </div>
+
+  {#if loading}
+    <p class="text-sm text-[var(--text-muted)]">Loading…</p>
+  {:else if error}
+    <div class="text-center py-16 rounded-xl border border-dashed border-[var(--border)]">
+      <p class="text-sm text-[var(--text-secondary)]">{error}</p>
     </div>
   {:else}
+    {#if project}
+      <div class="flex items-center gap-4 mb-8 pb-6 border-b border-[var(--border-subtle)]">
+        <ProjectIcon name={project.name} path={project.path} size={44} {iconUrl} />
+        <div class="min-w-0">
+          <p class="text-sm font-medium text-[var(--text)]">{project.name}</p>
+          <p class="text-xs text-[var(--text-muted)] font-mono truncate mt-0.5">{project.path}</p>
+          <p class="text-xs text-[var(--text-muted)] mt-1">Last active {formatDateTime(project.last_active)}</p>
+        </div>
+      </div>
+    {/if}
+
     {#if spans.length > 0}
       <section class="mb-10">
         <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Sessions</h3>
@@ -83,15 +100,11 @@
                 <div class="flex items-center gap-2.5">
                   <span class="w-1.5 h-1.5 rounded-full bg-[var(--accent)] shrink-0"></span>
                   <span class="text-sm font-medium text-[var(--text)] capitalize">{span.span_type}</span>
-                  {#if span.duration_ms}
-                    <span class="text-xs text-[var(--text-muted)]">{formatDuration(span.duration_ms)}</span>
-                  {/if}
+                  <span class="text-xs text-[var(--text-muted)]">{formatDuration(span.duration_ms)}</span>
                 </div>
                 <span class="text-xs text-[var(--text-muted)] tabular-nums">{formatTime(span.started_at)}</span>
               </div>
-              {#if span.project}
-                <p class="text-xs text-[var(--text-muted)] mt-2 ml-4">{span.project}</p>
-              {/if}
+              <p class="text-xs text-[var(--text-muted)] mt-2 ml-4">{span.event_count} events</p>
             </a>
           {/each}
         </div>
@@ -101,14 +114,11 @@
     <section>
       <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Activity</h3>
       {#if feed.length === 0}
-        <div class="text-center py-20 rounded-xl border border-dashed border-[var(--border)]">
-          <p class="text-sm text-[var(--text-secondary)]">No activity recorded yet.</p>
-          <p class="text-xs text-[var(--text-muted)] mt-2">Switch between apps to generate focus events.</p>
-        </div>
+        <p class="text-sm text-[var(--text-muted)]">No activity for this project yet.</p>
       {:else}
         <div class="space-y-2">
           {#each feed as item}
-            <div class="flex items-start gap-3 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-4 py-3.5 hover:border-[var(--accent)]/30 transition-colors">
+            <div class="flex items-start gap-3 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-4 py-3.5">
               <AppIcon event={item.event} size={32} />
               <div class="min-w-0 flex-1">
                 <div class="flex items-start justify-between gap-3">
@@ -118,11 +128,6 @@
                       <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-[var(--bg-muted)] text-[var(--text-muted)]">
                         {eventCategoryLabel(item.event)}
                       </span>
-                      {#if item.count > 1}
-                        <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--accent-muted)] text-[var(--accent)]">
-                          ×{item.count}
-                        </span>
-                      {/if}
                     </div>
                     <p class="text-xs text-[var(--text-muted)] mt-1 truncate">{eventSubtitle(item.event)}</p>
                   </div>

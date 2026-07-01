@@ -39,7 +39,11 @@ pub enum Commands {
     },
 
     /// Install launchd plist
-    Install,
+    Install {
+        /// Directories to watch (saved to config and passed to the daemon)
+        #[arg(long)]
+        watch: Vec<String>,
+    },
 
     /// Uninstall launchd plist
     Uninstall,

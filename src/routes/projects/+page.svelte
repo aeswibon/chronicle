@@ -55,7 +55,10 @@
 
     <div class="grid gap-3">
       {#each projects as proj}
-        <div class="flex items-center justify-between bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-5 py-4 hover:border-[var(--accent)]/30 transition-colors">
+        <a
+          href="/projects/{encodeURIComponent(proj.name)}"
+          class="flex items-center justify-between bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-5 py-4 hover:border-[var(--accent)]/30 transition-colors"
+        >
           <div class="flex items-center gap-4 min-w-0">
             <ProjectIcon name={proj.name} path={proj.path} size={36} iconUrl={iconUrls[proj.path] ?? null} />
             <div class="min-w-0">
@@ -69,7 +72,7 @@
               <p class="text-xs text-[var(--text-secondary)] mt-0.5">{proj.language}</p>
             {/if}
           </div>
-        </div>
+        </a>
       {/each}
     </div>
   {/if}

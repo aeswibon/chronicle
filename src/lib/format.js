@@ -19,6 +19,17 @@ export function formatDateTime(ts) {
   });
 }
 
+/** @param {number | null | undefined} ms */
+export function formatDuration(ms) {
+  if (!ms || ms <= 0) return '—';
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return '<1m';
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem > 0 ? `${hours}h ${rem}m` : `${hours}h`;
+}
+
 /** @param {number} ts */
 export function dateGroupLabel(ts) {
   const date = new Date(ts);

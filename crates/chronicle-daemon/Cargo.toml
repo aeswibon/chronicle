@@ -20,4 +20,5 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 shellexpand = "3"
 dirs = "6"
+toml = "0.8"
 libc = "0.2"

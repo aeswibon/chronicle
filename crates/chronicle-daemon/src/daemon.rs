@@ -49,11 +49,9 @@ impl Daemon {
         let watch_dirs: Vec<_> = self
             .watch_dirs
             .iter()
-            .map(|d| {
-                let expanded = shellexpand::tilde(d).to_string();
-                std::path::PathBuf::from(expanded)
-            })
+            .map(|d| crate::watch_dirs::expand_path(d))
             .collect();
+        let watch_dirs = crate::watch_dirs::resolve_watch_dirs(&watch_dirs);
 
         let server = Server::bind(&self.socket_path).map_err(|e| anyhow::anyhow!("bind: {e}"))?;
         let started_at = Instant::now();
@@ -72,11 +70,7 @@ impl Daemon {
         let collectors: Vec<collectors::Collector> = vec![
             collectors::Collector::WindowFocus(collectors::window_focus::WindowFocusCollector),
             collectors::Collector::Filesystem(collectors::filesystem::FilesystemCollector::new(
-                if watch_dirs.is_empty() {
-                    None
-                } else {
-                    Some(watch_dirs.clone())
-                },
+                Some(watch_dirs.clone()),
             )),
             collectors::Collector::Shell(collectors::shell::ShellHookCollector),
             collectors::Collector::Git(collectors::git::GitCollector::new(watch_dirs.clone())),
@@ -281,6 +275,84 @@ async fn handle_connection(
                             message: format!("projects query failed: {e}"),
                         },
                     },
+                    DaemonRequest::GetProjectContext {
+                        project,
+                        since,
+                        limit,
+                    } => {
+                        let project_record = store.query_project_by_name(&project).ok().flatten();
+                        let spans = store
+                            .query_spans_for_project(&project, since, limit)
+                            .unwrap_or_default();
+                        let events = store
+                            .query_activity_events_for_project(&project, since, None, limit)
+                            .unwrap_or_default();
+                        DaemonResponse::ProjectContext {
+                            project: project_record,
+                            spans,
+                            events,
+                        }
+                    }
+                    DaemonRequest::GetSpan { id, event_limit } => {
+                        match store.query_span_by_id(&id) {
+                            Ok(Some(span)) => {
+                                let since = span.started_at;
+                                let until = span.ended_at.unwrap_or(i64::MAX);
+                                let events = if let Some(ref project) = span.project {
+                                    store
+                                        .query_activity_events_for_project(
+                                            project,
+                                            since,
+                                            Some(until),
+                                            event_limit,
+                                        )
+                                        .unwrap_or_default()
+                                } else {
+                                    store
+                                        .query_events(since, Some(until), event_limit)
+                                        .unwrap_or_default()
+                                };
+                                DaemonResponse::SpanDetail { span, events }
+                            }
+                            Ok(None) => DaemonResponse::Error {
+                                code: 404,
+                                message: format!("span not found: {id}"),
+                            },
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("span query failed: {e}"),
+                            },
+                        }
+                    }
+                    DaemonRequest::GetConfig => {
+                        let cfg = crate::config::load();
+                        DaemonResponse::Config {
+                            watch_dirs: cfg.watch_dirs,
+                        }
+                    }
+                    DaemonRequest::SetConfig { watch_dirs } => {
+                        let cfg = crate::config::ChronicleConfig { watch_dirs };
+                        match crate::config::save(&cfg) {
+                            Ok(()) => DaemonResponse::Ack {
+                                event_id: "config_saved".into(),
+                            },
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("save config failed: {e}"),
+                            },
+                        }
+                    }
+                    DaemonRequest::InstallShellHook { shell } => {
+                        match crate::hook_install::install(shell.as_deref()) {
+                            Ok(()) => DaemonResponse::Ack {
+                                event_id: "hook_installed".into(),
+                            },
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("hook install failed: {e}"),
+                            },
+                        }
+                    }
                     DaemonRequest::EmitEvent { event } => {
                         let event_id = event.id.to_string();
                         if let Err(e) = store.insert_event(&event) {

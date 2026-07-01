@@ -26,6 +26,8 @@ pub enum DaemonRequest {
     },
     GetProjectContext {
         project: String,
+        since: i64,
+        limit: u32,
     },
     Search {
         query: String,
@@ -42,6 +44,17 @@ pub enum DaemonRequest {
     GetSessions {
         since: i64,
         until: Option<i64>,
+    },
+    GetConfig,
+    SetConfig {
+        watch_dirs: Vec<String>,
+    },
+    InstallShellHook {
+        shell: Option<String>,
+    },
+    GetSpan {
+        id: String,
+        event_limit: u32,
     },
     GetStatus,
     EmitEvent {
@@ -70,6 +83,18 @@ pub enum DaemonResponse {
     },
     Projects {
         projects: Vec<ProjectRecord>,
+    },
+    ProjectContext {
+        project: Option<ProjectRecord>,
+        spans: Vec<Span>,
+        events: Vec<CanonicalEvent>,
+    },
+    SpanDetail {
+        span: Span,
+        events: Vec<CanonicalEvent>,
+    },
+    Config {
+        watch_dirs: Vec<String>,
     },
     Status {
         uptime_secs: u64,

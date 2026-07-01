@@ -100,6 +100,121 @@ pub async fn search_events(
     }
 }
 
+#[derive(Serialize)]
+pub struct ProjectContextInfo {
+    pub project: Option<ProjectRecord>,
+    pub spans: Vec<Span>,
+    pub events: Vec<CanonicalEvent>,
+}
+
+#[tauri::command]
+pub async fn get_project_context(
+    state: State<'_, DaemonState>,
+    project: String,
+    since: i64,
+    limit: u32,
+) -> Result<ProjectContextInfo, String> {
+    let socket_path = state.socket_path.clone();
+    let mut client = Client::connect(&socket_path).await?;
+    match client
+        .request(DaemonRequest::GetProjectContext {
+            project,
+            since,
+            limit,
+        })
+        .await?
+    {
+        DaemonResponse::ProjectContext {
+            project,
+            spans,
+            events,
+        } => Ok(ProjectContextInfo {
+            project,
+            spans,
+            events,
+        }),
+        DaemonResponse::Error { message, .. } => Err(message),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[derive(Serialize)]
+pub struct SpanDetailInfo {
+    pub span: Span,
+    pub events: Vec<CanonicalEvent>,
+}
+
+#[tauri::command]
+pub async fn get_span_detail(
+    state: State<'_, DaemonState>,
+    id: String,
+    event_limit: u32,
+) -> Result<SpanDetailInfo, String> {
+    let socket_path = state.socket_path.clone();
+    let mut client = Client::connect(&socket_path).await?;
+    match client
+        .request(DaemonRequest::GetSpan {
+            id,
+            event_limit,
+        })
+        .await?
+    {
+        DaemonResponse::SpanDetail { span, events } => Ok(SpanDetailInfo { span, events }),
+        DaemonResponse::Error { message, .. } => Err(message),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[derive(Serialize)]
+pub struct ConfigInfo {
+    pub watch_dirs: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn get_config(state: State<'_, DaemonState>) -> Result<ConfigInfo, String> {
+    let socket_path = state.socket_path.clone();
+    let mut client = Client::connect(&socket_path).await?;
+    match client.request(DaemonRequest::GetConfig).await? {
+        DaemonResponse::Config { watch_dirs } => Ok(ConfigInfo { watch_dirs }),
+        DaemonResponse::Error { message, .. } => Err(message),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn set_config(
+    state: State<'_, DaemonState>,
+    watch_dirs: Vec<String>,
+) -> Result<(), String> {
+    let socket_path = state.socket_path.clone();
+    let mut client = Client::connect(&socket_path).await?;
+    match client
+        .request(DaemonRequest::SetConfig { watch_dirs })
+        .await?
+    {
+        DaemonResponse::Ack { .. } => Ok(()),
+        DaemonResponse::Error { message, .. } => Err(message),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn install_shell_hook(
+    state: State<'_, DaemonState>,
+    shell: Option<String>,
+) -> Result<(), String> {
+    let socket_path = state.socket_path.clone();
+    let mut client = Client::connect(&socket_path).await?;
+    match client
+        .request(DaemonRequest::InstallShellHook { shell })
+        .await?
+    {
+        DaemonResponse::Ack { .. } => Ok(()),
+        DaemonResponse::Error { message, .. } => Err(message),
+        _ => Err("unexpected response".into()),
+    }
+}
+
 #[tauri::command]
 pub async fn list_projects(
     state: State<'_, DaemonState>,
