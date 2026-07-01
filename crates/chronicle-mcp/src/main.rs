@@ -249,6 +249,61 @@ impl ChronicleMcp {
             Err(e) => error_result(e),
         }
     }
+
+    #[tool(description = "AI rollup sessions persisted in the sessions table")]
+    async fn get_sessions(
+        &self,
+        Parameters(TimelineParams { since_ms, limit: _ }): Parameters<TimelineParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let since = since_timestamp(since_ms);
+        match connect(&self.socket).await {
+            Ok(mut client) => match client
+                .request(DaemonRequest::GetSessions {
+                    since,
+                    until: None,
+                })
+                .await
+            {
+                Ok(DaemonResponse::Sessions { sessions }) => text_result(
+                    serde_json::to_string_pretty(&sessions)
+                        .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}")),
+                ),
+                Ok(DaemonResponse::Error { message, .. }) => error_result(message),
+                Ok(_) => error_result("unexpected response"),
+                Err(e) => error_result(e),
+            },
+            Err(e) => error_result(e),
+        }
+    }
+
+    #[tool(description = "Generate and store a rule-based daily work summary from spans and events")]
+    async fn get_daily_summary(
+        &self,
+        Parameters(TimelineParams { since_ms, limit: _ }): Parameters<TimelineParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let since = since_timestamp(since_ms);
+        match connect(&self.socket).await {
+            Ok(mut client) => match client
+                .request(DaemonRequest::SummarizeDay {
+                    since,
+                    until: None,
+                })
+                .await
+            {
+                Ok(DaemonResponse::DailySummary { summary, session }) => text_result(
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "summary": summary,
+                        "session": session,
+                    }))
+                    .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}")),
+                ),
+                Ok(DaemonResponse::Error { message, .. }) => error_result(message),
+                Ok(_) => error_result("unexpected response"),
+                Err(e) => error_result(e),
+            },
+            Err(e) => error_result(e),
+        }
+    }
 }
 
 #[tool_handler]

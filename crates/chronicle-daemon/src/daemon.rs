@@ -311,8 +311,7 @@ async fn handle_connection(
                     } => {
                         let query = match mode {
                             chronicle_ipc::SearchMode::Semantic => {
-                                tracing::debug!("semantic search: using keyword FTS until chronicle-ai indexing");
-                                query
+                                chronicle_ai::expand_search_query(&query)
                             }
                             chronicle_ipc::SearchMode::Keyword => query,
                         };
@@ -386,6 +385,45 @@ async fn handle_connection(
                             Err(e) => DaemonResponse::Error {
                                 code: 500,
                                 message: format!("errors query failed: {e}"),
+                            },
+                        }
+                    }
+                    DaemonRequest::GetSessions { since, until } => {
+                        match store.query_sessions(since, until) {
+                            Ok(sessions) => DaemonResponse::Sessions { sessions },
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("sessions query failed: {e}"),
+                            },
+                        }
+                    }
+                    DaemonRequest::SummarizeDay { since, until } => {
+                        let until = until.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+                        match store.query_spans(since, Some(until), 200) {
+                            Ok(spans) => match store.query_activity_events(since, Some(until), 500)
+                            {
+                                Ok(events) => {
+                                    let session = chronicle_ai::build_daily_session(
+                                        since, until, &spans, &events,
+                                    );
+                                    let summary = session.summary.clone().unwrap_or_default();
+                                    if let Err(e) = store.insert_session(&session) {
+                                        DaemonResponse::Error {
+                                            code: 500,
+                                            message: format!("session persist failed: {e}"),
+                                        }
+                                    } else {
+                                        DaemonResponse::DailySummary { summary, session }
+                                    }
+                                }
+                                Err(e) => DaemonResponse::Error {
+                                    code: 500,
+                                    message: format!("events query failed: {e}"),
+                                },
+                            },
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("spans query failed: {e}"),
                             },
                         }
                     }

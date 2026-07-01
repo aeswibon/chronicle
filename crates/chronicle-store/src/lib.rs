@@ -405,6 +405,66 @@ impl Store {
         Ok(removed)
     }
 
+    pub fn insert_session(&self, session: &chronicle_core::Session) -> SqlResult<()> {
+        let session_type = match session.session_type {
+            chronicle_core::SessionType::Focus => "focus",
+            chronicle_core::SessionType::Break => "break",
+            chronicle_core::SessionType::Meeting => "meeting",
+            chronicle_core::SessionType::Unknown => "unknown",
+        };
+        self.conn.execute(
+            "INSERT OR REPLACE INTO sessions (id, session_type, started_at, ended_at, duration_ms, project, span_count, event_count, summary)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                session.id.to_string(),
+                session_type,
+                session.started_at,
+                session.ended_at,
+                session.duration_ms,
+                session.project,
+                session.span_count,
+                session.event_count,
+                session.summary,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn query_sessions(
+        &self,
+        since: i64,
+        until: Option<i64>,
+    ) -> SqlResult<Vec<chronicle_core::Session>> {
+        let until = until.unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_type, started_at, ended_at, duration_ms, project, span_count, event_count, summary
+             FROM sessions WHERE started_at >= ?1 AND started_at <= ?2
+             ORDER BY started_at DESC",
+        )?;
+        let rows = stmt.query_map(params![since, until], |row| {
+            let session_type: String = row.get(1)?;
+            let session_type = match session_type.as_str() {
+                "break" => chronicle_core::SessionType::Break,
+                "meeting" => chronicle_core::SessionType::Meeting,
+                "unknown" => chronicle_core::SessionType::Unknown,
+                _ => chronicle_core::SessionType::Focus,
+            };
+            let id: String = row.get(0)?;
+            Ok(chronicle_core::Session {
+                id: uuid::Uuid::parse_str(&id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                session_type,
+                started_at: row.get(2)?,
+                ended_at: row.get(3)?,
+                duration_ms: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
+                project: row.get(5)?,
+                span_count: row.get(6)?,
+                event_count: row.get(7)?,
+                summary: row.get(8)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     /// Remove events and spans older than `cutoff_ms`. Returns (events_deleted, spans_deleted).
     pub fn prune_before(&self, cutoff_ms: i64) -> SqlResult<(usize, usize)> {
         let events = self

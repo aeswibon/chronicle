@@ -9,6 +9,7 @@ chronicle-config = { path = "../chronicle-config" }
 chronicle-hooks = { path = "../chronicle-hooks" }
 chronicle-ipc = { path = "../chronicle-ipc" }
 chronicle-store = { path = "../chronicle-store" }
+chronicle-ai = { path = "../chronicle-ai" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

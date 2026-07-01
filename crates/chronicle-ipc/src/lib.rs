@@ -45,6 +45,10 @@ pub enum DaemonRequest {
         since: i64,
         until: Option<i64>,
     },
+    SummarizeDay {
+        since: i64,
+        until: Option<i64>,
+    },
     GetConfig,
     SetConfig {
         watch_dirs: Vec<String>,
@@ -109,6 +113,13 @@ pub enum DaemonResponse {
     },
     Ack {
         event_id: String,
+    },
+    Sessions {
+        sessions: Vec<chronicle_core::Session>,
+    },
+    DailySummary {
+        summary: String,
+        session: chronicle_core::Session,
     },
     Error {
         code: u32,

@@ -212,6 +212,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -241,6 +242,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chronicle-ai",
  "chronicle-config",
  "chronicle-core",
  "chronicle-hooks",
@@ -323,6 +325,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
