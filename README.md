@@ -1,64 +1,119 @@
 # Chronicle
 
-Local-first developer observability.
+**Local-first developer observability** for macOS.
 
-Chronicle captures your coding activity — window focus, file changes, git operations, and terminal commands — and stores them in a local SQLite database. It runs as a background daemon on macOS with a Tauri + Svelte 5 desktop UI.
+Chronicle automatically records what you were doing while coding — window focus, git operations, terminal commands, and meaningful file changes — and stores it in a local SQLite database. Browse timelines in a Tauri + Svelte desktop app, search your history, or query it from AI tools via MCP.
 
-## Architecture
+> **Documentation:** [docs/README.md](docs/README.md) — five-part guide (introduction → system design → capture → storage → clients)
+
+---
+
+## Why Chronicle?
+
+- **Remember context** — See which app, repo, and branch you were in hours ago.
+- **Search your work** — Full-text search over activity, not just git log.
+- **Project-aware** — Events grouped by git/cargo roots; per-project timelines.
+- **AI-ready** — `chronicle-mcp` exposes search, projects, and sessions to Cursor/Claude.
+- **Private by default** — No cloud, no keystrokes, no screenshots. Data stays in `~/.chronicle/`.
+
+---
+
+## Architecture (overview)
 
 ```
 ┌──────────────┐     ┌──────────────────┐     ┌──────────────┐
 │  Tauri App   │◄───►│  chronicle-daemon│◄───►│  Collectors  │
 │  (Svelte 5)  │ UDS │  (Tokio/Rust)    │     │  (macOS)     │
 └──────────────┘     └───────┬──────────┘     └──────────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │  chronicle-store │
-                    │  (SQLite + WAL)  │
-                    └──────────────────┘
+         ▲                   │
+┌────────┴────────┐ ┌───────▼─────────┐
+│  chronicle-mcp  │ │  chronicle-store │
+│  (stdio / AI)   │ │  (SQLite + FTS)  │
+└─────────────────┘ └─────────────────┘
 ```
 
-- **`chronicle-core`**: Canonical event schema, spans, sessions, types
-- **`chronicle-ipc`**: UDS protocol (length-prefixed JSON over Unix sockets)
-- **`chronicle-store`**: SQLite persistence with FTS5 search
-- **`chronicle-daemon`**: macOS daemon + collectors (window focus, filesystem, git, shell)
-- **`chronicle-mcp`**: MCP server for AI tool access (planned)
-- **`chronicle-plugin`**: Dynamic plugin loader (planned)
+| Component | Role |
+|-----------|------|
+| `chronicle-core` | Canonical event schema, spans, sessions |
+| `chronicle-ipc` | JSON over Unix domain sockets |
+| `chronicle-store` | SQLite persistence + FTS5 search |
+| `chronicle-daemon` | Collectors, filtering, launchd service |
+| `chronicle-mcp` | MCP tools for AI assistants |
+| `src-tauri` + `src/` | Desktop UI |
 
-## Quick Start
+Full design: **[docs/README.md](docs/README.md)** (start with [Introduction](docs/01-introduction.md))
+
+---
+
+## Quick start
 
 ```bash
-# Install daemon
-cargo build --release -p chronicle-daemon
-./target/release/chronicle-daemon install
+# Build
+cargo build --release -p chronicle-daemon -p chronicle-mcp
+bun install
+
+# Install background daemon (add your code directories)
+./target/release/chronicle-daemon install --watch ~/Developer
 launchctl load ~/Library/LaunchAgents/com.chronicle.daemon.plist
 
-# Check status
-./target/release/chronicle-daemon status
+# Optional: shell hook for terminal commands
+./target/release/chronicle-daemon hook --shell zsh
 
-# Launch UI
+# Status + UI
+./target/release/chronicle-daemon status
 bun run tauri dev
 ```
 
+Configure watch paths in the app under **Settings**, or edit `~/.chronicle/config.toml`.
+
+---
+
 ## Collectors
 
-| Collector | Source | Type | Emits |
-|-----------|--------|------|-------|
-| Window Focus | `osascript` polling (2s) | `os` → `process.focus` | App name, bundle ID, window title |
-| Filesystem | `notify` (fsevents) | `filesystem` → `file.{modified,created,deleted}` | Path, extension, project |
-| Git | `notify` on `.git/logs/HEAD` + `HEAD` | `git` → `commit.created`, `branch.checkout`, etc. | Branch, reflog message |
-| Shell | UDP listener (`127.0.0.1:9712`) | `shell` → `command.{completed,failed}` | Command, exit code, cwd, duration |
+| Collector | Emits | Notes |
+|-----------|-------|-------|
+| Window focus | `process.focus` | App name, bundle ID, window title |
+| Filesystem | `file.created` / `file.deleted` | Source files under watch dirs; ignores `node_modules`, `target`, … |
+| Git | `commit.created`, `branch.checkout`, … | Watches reflogs under discovered repos |
+| Shell | `command.completed` / `command.failed` | UDP hook on `127.0.0.1:9712` |
+
+---
+
+## MCP (AI tools)
+
+Build and register in your MCP client:
+
+```json
+"chronicle": {
+  "command": "/path/to/chronicle-mcp",
+  "args": []
+}
+```
+
+Tools: `chronicle_status`, `search_events`, `list_projects`, `get_timeline`, `get_project_context`. Requires the daemon to be running.
+
+---
 
 ## Privacy
 
-- **No keystrokes, clipboard, screenshots, audio, or video.**
-- All data stays on your machine (local-first).
-- Cloud sync is optional and opt-in (future).
-- Collectors are opt-in per-category.
+- **No** keystrokes, clipboard, screenshots, audio, or video.
+- **Yes** app names, window titles, shell commands, git messages, file paths (not contents).
+- All data local unless you add sync later (not implemented).
 
-## Storage
+Details: [Introduction — Privacy](docs/01-introduction.md) and [Capture pipeline](docs/03-capture-pipeline.md#what-is-not-captured)
 
-SQLite with WAL mode at `~/.chronicle/chronicle.db`. Schema includes FTS5 full-text search on events.
+---
+
+## Development
+
+```bash
+cargo test --workspace
+bun run check
+```
+
+See **[docs/05-clients-and-development.md](docs/05-clients-and-development.md)** for repo layout, adding collectors, and IPC extensions.
+
+---
 
 ## License
 
