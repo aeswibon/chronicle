@@ -1,15 +1,22 @@
 cask "chronicle" do
   version "0.1.1"
-  sha256 arm:   "82263f135762f0297b04b10fa97118450a867614aa8cb0918d0d28d168f5b4d5",
-         intel: "5ea67f6894710bbc1bebe3893fcd1a08db52e2915b6caa2a9fd6d8469841b05b"
 
-  url "https://github.com/aeswibon/chronicle/releases/download/v#{version}/chronicle-#{arch == :arm64 ? "arm64" : "x64"}.dmg"
+  on_arm do
+    sha256 "82263f135762f0297b04b10fa97118450a867614aa8cb0918d0d28d168f5b4d5"
+    url "https://github.com/aeswibon/chronicle/releases/download/v#{version}/chronicle-arm64.dmg"
+  end
+
+  on_intel do
+    sha256 "5ea67f6894710bbc1bebe3893fcd1a08db52e2915b6caa2a9fd6d8469841b05b"
+    url "https://github.com/aeswibon/chronicle/releases/download/v#{version}/chronicle-x64.dmg"
+  end
+
   name "Chronicle"
   desc "Local-first developer observability for macOS"
   homepage "https://github.com/aeswibon/chronicle"
 
   livecheck do
-    url :url
+    url :homepage
     strategy :github_latest
   end
 

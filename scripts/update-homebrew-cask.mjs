@@ -41,10 +41,8 @@ if (!fs.existsSync(caskPath)) {
 
 let cask = fs.readFileSync(caskPath, 'utf8');
 cask = cask.replace(/^(\s*version\s+)"[^"]+"/m, `$1"${version}"`);
-cask = cask.replace(
-  /^(\s*sha256\s+arm:\s+)"[a-f0-9]{64}",\s*\n\s*intel:\s+"[a-f0-9]{64}"/m,
-  `$1"${arm}",\n         intel: "${intel}"`,
-);
+cask = cask.replace(/(on_arm do\n\s+sha256\s+)"[a-f0-9]{64}"/m, `$1"${arm}"`);
+cask = cask.replace(/(on_intel do\n\s+sha256\s+)"[a-f0-9]{64}"/m, `$1"${intel}"`);
 
 fs.writeFileSync(caskPath, cask);
 console.log(`Updated ${caskPath} for v${version}`);
