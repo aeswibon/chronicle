@@ -123,7 +123,6 @@ fn get_frontmost_app_macos() -> Result<AppInfo, String> {
     })
 }
 
-#[cfg(target_os = "macos")]
 fn parse_front_asn(stdout: &str) -> Option<String> {
     for line in stdout.lines() {
         let trimmed = line.trim();
@@ -135,7 +134,6 @@ fn parse_front_asn(stdout: &str) -> Option<String> {
     None
 }
 
-#[cfg(target_os = "macos")]
 fn parse_lsappinfo_field(stdout: &str, key: &str) -> Option<String> {
     let needle = format!("\"{key}\"=");
     for line in stdout.lines() {
@@ -147,7 +145,6 @@ fn parse_lsappinfo_field(stdout: &str, key: &str) -> Option<String> {
     None
 }
 
-#[cfg(target_os = "macos")]
 fn parse_quoted_value(raw: &str) -> Option<String> {
     let raw = raw.trim();
     if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
