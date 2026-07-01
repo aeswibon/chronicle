@@ -233,6 +233,7 @@ mod tests {
         assert!(!should_record(&event));
     }
 
+    #[test]
     fn skips_chronicle_focus() {
         let mut event = CanonicalEvent::new("chronicle-ui", EventCategory::Os, "process.focus");
         event.metadata = serde_json::json!({"app_name": "chronicle-ui"});

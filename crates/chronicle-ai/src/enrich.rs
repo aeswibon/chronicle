@@ -233,6 +233,7 @@ mod tests {
         assert!(line.contains("Ghostty"));
     }
 
+    #[test]
     fn enriches_shell_failure() {
         let mut e = CanonicalEvent::new("cargo", EventCategory::Shell, "command.failed");
         e.project = Some("chronicle".into());

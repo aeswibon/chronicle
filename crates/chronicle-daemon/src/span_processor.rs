@@ -259,6 +259,7 @@ mod tests {
         assert_eq!(p.active_spans().len(), 1);
     }
 
+    #[test]
     fn only_one_active_span_at_a_time() {
         let mut p = SpanProcessor::new();
         let mut a = CanonicalEvent::new("Cursor", EventCategory::Os, "process.focus");
