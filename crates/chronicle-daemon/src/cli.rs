@@ -12,7 +12,7 @@ pub enum Commands {
     /// Start the Chronicle daemon
     Start {
         /// Path to the UDS socket
-        #[arg(long, default_value = "/tmp/chronicle.sock")]
+        #[arg(long, default_value = "~/.chronicle/chronicle.sock")]
         socket: String,
 
         /// Path to the SQLite store
@@ -27,14 +27,14 @@ pub enum Commands {
     /// Stop the running daemon
     Stop {
         /// Path to the UDS socket
-        #[arg(long, default_value = "/tmp/chronicle.sock")]
+        #[arg(long, default_value = "~/.chronicle/chronicle.sock")]
         socket: String,
     },
 
     /// Show daemon status
     Status {
         /// Path to the UDS socket
-        #[arg(long, default_value = "/tmp/chronicle.sock")]
+        #[arg(long, default_value = "~/.chronicle/chronicle.sock")]
         socket: String,
     },
 

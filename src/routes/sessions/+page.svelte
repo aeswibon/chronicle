@@ -19,6 +19,7 @@
     try {
       const since = Date.now() - 30 * 86400000;
       sessions = await invoke('get_sessions', { since, until: null });
+      sessions.sort((a, b) => b.started_at - a.started_at);
     } catch (e) {
       error = String(e);
       sessions = [];
@@ -34,9 +35,7 @@
     preview = null;
     summarySource = '';
     try {
-      const since = new Date();
-      since.setHours(0, 0, 0, 0);
-      const result = await invoke('summarize_day', { since: since.getTime(), until: null });
+      const result = await invoke('summarize_today');
       summarySource = result.source ?? 'rules';
       if (result.persisted) {
         preview = null;
@@ -44,7 +43,7 @@
       } else {
         preview = {
           summary: result.summary,
-          started_at: since.getTime(),
+          started_at: Date.now(),
           session_type: 'focus',
           span_count: 0,
           event_count: 0,
@@ -85,7 +84,9 @@
   {#if preview}
     <article class="bg-[var(--bg-elevated)] border border-[var(--accent)]/40 rounded-xl px-5 py-4 mb-6">
       <div class="flex items-center justify-between gap-3 mb-2">
-        <p class="text-xs font-medium text-[var(--accent)] uppercase tracking-wider">Today's summary</p>
+        <p class="text-xs font-medium text-[var(--accent)] uppercase tracking-wider">
+          Generated {formatDateTime(preview.started_at)}
+        </p>
         {#if preview.source}
           <span
             class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border"
@@ -115,7 +116,7 @@
         <article class="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-5 py-4">
           <div class="flex items-start justify-between gap-4 mb-2">
             <div>
-              <p class="text-sm font-medium text-[var(--text)] capitalize">{session.session_type}</p>
+              <p class="text-sm font-medium text-[var(--text)] capitalize">Daily summary</p>
               {#if session.project}
                 <p class="text-xs text-[var(--text-muted)] mt-1">{session.project}</p>
               {/if}

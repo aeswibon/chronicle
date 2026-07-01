@@ -40,8 +40,7 @@
       <p class="text-sm text-[var(--text-secondary)]">{error}</p>
       {#if error.includes('connect') || error.includes('eof')}
         <p class="text-xs text-[var(--text-muted)] mt-3 max-w-md mx-auto">
-          Rebuild and restart the daemon so it supports project listing:
-          <code class="font-mono">cargo build --release -p chronicle-daemon && launchctl kickstart -k gui/$UID/com.chronicle.daemon</code>
+          Reopen Chronicle or go to Settings → Start capturing to connect the background service.
         </p>
       {/if}
     </div>

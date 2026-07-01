@@ -13,7 +13,7 @@ use std::sync::Arc;
     about = "MCP server for Chronicle developer activity"
 )]
 struct Cli {
-    #[arg(long, default_value = "/tmp/chronicle.sock")]
+    #[arg(long, default_value = "~/.chronicle/chronicle.sock")]
     socket: String,
 }
 

@@ -87,7 +87,8 @@ async fn install_launchd(cli_watch: &[String]) -> anyhow::Result<()> {
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
     let plist_path = home.join("Library/LaunchAgents/com.chronicle.daemon.plist");
     let daemon_path = std::env::current_exe()?;
-    let store_path = home.join(".chronicle/chronicle.db");
+    let store_path = chronicle_config::default_store_path();
+    let socket_path = chronicle_config::default_socket_path();
     let log_dir = home.join("Library/Logs");
     let watch_dirs = watch_dirs::watch_dirs_for_plist(cli_watch);
     let watch_env = watch_dirs::format_env_watch(&watch_dirs);
@@ -96,7 +97,7 @@ async fn install_launchd(cli_watch: &[String]) -> anyhow::Result<()> {
         format!("<string>{}</string>", daemon_path.display()),
         "<string>start</string>".into(),
         "<string>--socket</string>".into(),
-        "<string>/tmp/chronicle.sock</string>".into(),
+        format!("<string>{}</string>", socket_path.display()),
         "<string>--store</string>".into(),
         format!("<string>{}</string>", store_path.display()),
     ];
@@ -146,8 +147,43 @@ async fn install_launchd(cli_watch: &[String]) -> anyhow::Result<()> {
             println!("  {}", dir.display());
         }
     }
-    println!("Run: launchctl load {}", plist_path.display());
+    if let Err(e) = activate_launch_agent(&plist_path) {
+        println!("Note: auto-start via launchctl failed ({e}).");
+        println!(
+            "Run manually: launchctl bootstrap gui/$(id -u) {}",
+            plist_path.display()
+        );
+    } else {
+        println!("Daemon started (user LaunchAgent, no admin password required).");
+    }
     Ok(())
+}
+
+fn activate_launch_agent(plist_path: &std::path::Path) -> anyhow::Result<()> {
+    let uid = std::process::Command::new("id").arg("-u").output()?;
+    let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+    let domain = format!("gui/{uid}");
+    let plist_str = plist_path.to_string_lossy().to_string();
+
+    let _ = std::process::Command::new("launchctl")
+        .args(["bootout", &domain, &plist_str])
+        .status();
+
+    let bootstrap = std::process::Command::new("launchctl")
+        .args(["bootstrap", &domain, &plist_str])
+        .status()?;
+    if !bootstrap.success() {
+        anyhow::bail!("launchctl bootstrap exited with {}", bootstrap);
+    }
+
+    let kick = std::process::Command::new("launchctl")
+        .args(["kickstart", "-k", &format!("{domain}/com.chronicle.daemon")])
+        .status()?;
+    if kick.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("launchctl kickstart failed")
+    }
 }
 
 async fn uninstall_launchd() -> anyhow::Result<()> {

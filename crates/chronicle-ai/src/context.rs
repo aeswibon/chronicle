@@ -1,5 +1,6 @@
 //! Structured digest for LLM daily summaries.
 
+use crate::summary_filter::{is_high_signal, is_meaningful_failure, is_summary_noise};
 use chronicle_core::{CanonicalEvent, Span};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -34,8 +35,13 @@ pub struct HighlightLine {
 
 impl DayReportContext {
     pub fn build(since: i64, until: i64, spans: &[Span], events: &[CanonicalEvent]) -> Self {
-        let stats = compute_stats(spans, events);
-        let highlights = select_highlights(events);
+        let filtered: Vec<CanonicalEvent> = events
+            .iter()
+            .filter(|e| !is_summary_noise(e))
+            .cloned()
+            .collect();
+        let stats = compute_stats(spans, &filtered);
+        let highlights = select_highlights(&filtered);
         Self {
             since,
             until,
@@ -47,10 +53,11 @@ impl DayReportContext {
     pub fn to_prompt_text(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!(
-            "Period: {} – {}\n",
-            format_ts(self.since),
-            format_ts(self.until)
+            "Period: {} – {} (local time)\n",
+            format_local_ts(self.since),
+            format_local_ts(self.until)
         ));
+        out.push_str(&format!("Date: {}\n", format_local_date(self.since)));
         out.push_str(&format!(
             "Stats: {} spans, {} events, {} projects, {} errors, ~{}m focused\n",
             self.stats.span_count,
@@ -74,7 +81,7 @@ impl DayReportContext {
                 .unwrap_or_default();
             out.push_str(&format!(
                 "- {} {}{}{} — {}\n",
-                format_ts(h.timestamp),
+                format_local_ts(h.timestamp),
                 h.intent,
                 if h.outcome == "failure" {
                     " (failed)"
@@ -109,7 +116,7 @@ fn compute_stats(spans: &[Span], events: &[CanonicalEvent]) -> DayStats {
         if let Some(i) = event.metadata.get("intent").and_then(|v| v.as_str()) {
             intents.insert(i.to_string());
         }
-        if event.metadata.get("outcome").and_then(|v| v.as_str()) == Some("failure") {
+        if is_meaningful_failure(event) {
             error_count += 1;
         }
     }
@@ -182,32 +189,62 @@ fn select_highlights(events: &[CanonicalEvent]) -> Vec<HighlightLine> {
 }
 
 fn score_event(event: &CanonicalEvent) -> i32 {
+    if is_summary_noise(event) {
+        return 0;
+    }
     let mut score = 1;
     if event.category == chronicle_core::EventCategory::Git {
-        score += 8;
-    }
-    if event.metadata.get("outcome").and_then(|v| v.as_str()) == Some("failure") {
-        score += 10;
-    }
-    if event.category == chronicle_core::EventCategory::Shell {
-        score += 3;
+        score += 20;
     }
     if event.category == chronicle_core::EventCategory::Ide {
-        score += 2;
+        score += 8;
+    }
+    if event.category == chronicle_core::EventCategory::Build {
+        score += 6;
+    }
+    if is_meaningful_failure(event) {
+        score += 5;
+    }
+    if event.category == chronicle_core::EventCategory::Shell {
+        if event
+            .metadata
+            .get("activity_label")
+            .and_then(|v| v.as_str())
+            .is_some()
+        {
+            score += 6;
+        } else {
+            score += 1;
+        }
     }
     if event
         .metadata
         .get("activity_label")
         .and_then(|v| v.as_str())
-        .is_some_and(|l| l.contains("deploy") || l.contains("commit"))
+        .is_some_and(|l| {
+            l.contains("deploy") || l.contains("commit") || l.contains("push") || l.contains("test")
+        })
     {
-        score += 5;
+        score += 8;
+    }
+    if is_high_signal(event) {
+        score += 2;
     }
     score
 }
 
-fn format_ts(ms: i64) -> String {
+fn format_local_ts(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
-        .map(|dt| dt.format("%H:%M").to_string())
+        .map(|dt| dt.with_timezone(&chrono::Local).format("%H:%M").to_string())
         .unwrap_or_else(|| "??:??".into())
+}
+
+fn format_local_date(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%A, %B %d, %Y")
+                .to_string()
+        })
+        .unwrap_or_else(|| "today".into())
 }

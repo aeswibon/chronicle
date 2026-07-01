@@ -375,7 +375,7 @@
         </div>
         <div class="flex items-center justify-between px-5 py-4">
           <span class="text-sm text-[var(--text-secondary)]">Socket</span>
-          <code class="text-xs text-[var(--text-muted)] font-mono">/tmp/chronicle.sock</code>
+          <code class="text-xs text-[var(--text-muted)] font-mono">~/.chronicle/chronicle.sock</code>
         </div>
         <div class="px-5 py-4 border-t border-[var(--border-subtle)]">
           <button
@@ -392,10 +392,18 @@
         </div>
       {:else}
         <div class="px-5 py-16 text-center">
-          <p class="text-sm text-[var(--text-secondary)]">Daemon not connected.</p>
-          <p class="text-xs text-[var(--text-muted)] mt-2">
-            Start with <code class="text-[var(--accent)] font-mono">chronicle-daemon start</code>
+          <p class="text-sm text-[var(--text-secondary)]">Background service not running.</p>
+          <p class="text-xs text-[var(--text-muted)] mt-2 max-w-md mx-auto leading-relaxed">
+            Chronicle runs a per-user background service (no administrator password). Open the app once or click Restart daemon below — it installs automatically.
           </p>
+          <button
+            type="button"
+            onclick={restartDaemon}
+            disabled={restarting}
+            class="mt-4 px-4 py-2 text-sm rounded-lg bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {restarting ? 'Starting…' : 'Start capturing'}
+          </button>
         </div>
       {/if}
     </div>

@@ -3,7 +3,7 @@
 use crate::context::DayReportContext;
 use chronicle_config::AiConfig;
 
-const SYSTEM_PROMPT: &str = "You are a technical work-log assistant. Write a concise daily developer summary in 3-6 complete sentences. Cover: main projects touched, meaningful work accomplished, test/build/deploy activity, failures worth revisiting, and how focus time was spent. Write in past tense, first person optional. Do not invent facts not present in the digest. No markdown headers.";
+const SYSTEM_PROMPT: &str = "You are a technical work-log assistant. Write a concise, readable daily developer summary in 3-5 complete sentences for a human reader. Lead with what was accomplished (projects, commits, pushes, tests, builds). Mention focus time only briefly. Ignore trivial terminal noise (cat, pbcopy, clipboard helpers, exploratory rm). Only mention failures if they blocked real work (build/test/deploy/git). Use the digest's local date and times. Do not invent facts. No bullet lists or markdown headers.";
 
 pub async fn generate_summary(config: &AiConfig, ctx: &DayReportContext) -> anyhow::Result<String> {
     let user_content = ctx.to_prompt_text();

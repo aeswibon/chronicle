@@ -4,6 +4,7 @@ pub mod context;
 pub mod enrich;
 pub mod llm;
 pub mod rule_summary;
+pub mod summary_filter;
 
 pub use context::DayReportContext;
 pub use enrich::enrich_event;
@@ -83,7 +84,7 @@ pub async fn summarize_day(
         }
     }
     (
-        rule_summary::daily_summary(spans, &prepared),
+        rule_summary::daily_summary(since, spans, &prepared),
         SummarySource::Rules,
     )
 }
@@ -96,7 +97,7 @@ pub fn build_daily_session(
     events: &[CanonicalEvent],
     summary: String,
 ) -> Session {
-    let duration_ms = (until - since).max(0) as u64;
+    let focus_ms: u64 = spans.iter().map(|s| s.duration_ms.unwrap_or(0)).sum();
     let project = spans
         .iter()
         .filter_map(|s| s.project.clone())
@@ -110,9 +111,14 @@ pub fn build_daily_session(
     Session {
         id: uuid::Uuid::new_v4(),
         session_type: SessionType::Focus,
-        started_at: since,
+        // Stamp when the summary was generated so the list sorts newest-first.
+        started_at: until,
         ended_at: Some(until),
-        duration_ms: Some(duration_ms),
+        duration_ms: if focus_ms > 0 {
+            Some(focus_ms)
+        } else {
+            Some((until - since).max(0) as u64)
+        },
         project,
         span_count: spans.len() as u32,
         event_count: events.len() as u32,

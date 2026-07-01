@@ -221,7 +221,7 @@ async fn process_events(
                 error!("persist event: {e}");
             } else if let Some(ref name) = event.project {
                 if let Some(path) = project::project_path_from_event(name, &event.metadata) {
-                    if let Err(e) = guard.upsert_project(name, &path, None) {
+                    if let Err(e) = guard.upsert_project(name, &path, None, event.timestamp) {
                         error!("upsert project: {e}");
                     }
                 }
@@ -394,7 +394,19 @@ async fn handle_connection(
                         }
                     }
                     DaemonRequest::SummarizeDay { since, until } => {
-                        let until = until.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+                        let until =
+                            until.unwrap_or_else(|| chrono::Local::now().timestamp_millis());
+                        let day_end_exclusive = chrono::DateTime::from_timestamp_millis(since)
+                            .and_then(|dt| {
+                                let local = dt.with_timezone(&chrono::Local);
+                                let next_day = local.date_naive().succ_opt()?;
+                                let midnight = next_day.and_hms_opt(0, 0, 0)?;
+                                midnight
+                                    .and_local_timezone(chrono::Local)
+                                    .single()
+                                    .map(|d| d.timestamp_millis())
+                            })
+                            .unwrap_or(since + 86_400_000);
                         let ai_cfg = chronicle_config::load().ai;
                         match store.query_spans(since, Some(until), 200) {
                             Ok(spans) => match store.query_activity_events(since, Some(until), 500)
@@ -416,7 +428,14 @@ async fn handle_connection(
                                         chronicle_ai::SummarySource::Rules => "rules",
                                     }
                                     .to_string();
-                                    if let Err(e) = store.insert_session(&session) {
+                                    if let Err(e) =
+                                        store.delete_sessions_between(since, day_end_exclusive)
+                                    {
+                                        DaemonResponse::Error {
+                                            code: 500,
+                                            message: format!("session replace failed: {e}"),
+                                        }
+                                    } else if let Err(e) = store.insert_session(&session) {
                                         DaemonResponse::Error {
                                             code: 500,
                                             message: format!("session persist failed: {e}"),

@@ -46,7 +46,7 @@ pub fn bootstrap_projects_light(store: &Store) {
 pub fn apply_discovered_repos(store: &Store, repos: &[(String, String)]) -> usize {
     let mut count = 0usize;
     for (name, path) in repos {
-        if store.upsert_project(name, path, None).is_ok() {
+        if store.upsert_project(name, path, None, 0).is_ok() {
             count += 1;
         }
     }
@@ -125,7 +125,10 @@ fn bootstrap_from_recent_events(store: &Store) -> usize {
             .or_else(|| Path::new(path).file_name().and_then(|n| n.to_str()))
             .unwrap_or("project");
 
-        if store.upsert_project(name, path, None).is_ok() {
+        if store
+            .upsert_project(name, path, None, event.timestamp)
+            .is_ok()
+        {
             count += 1;
         }
     }

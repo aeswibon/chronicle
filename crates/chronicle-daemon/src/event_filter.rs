@@ -135,6 +135,14 @@ fn should_record_shell(event: &CanonicalEvent) -> bool {
         return false;
     }
 
+    if is_shell_noise_cmd(trimmed) {
+        return false;
+    }
+
+    if event.r#type == "command.failed" && is_exploratory_failure(trimmed) {
+        return false;
+    }
+
     let first = trimmed.split_whitespace().next().unwrap_or("");
     let base = first.rsplit('/').next().unwrap_or(first);
 
@@ -144,6 +152,42 @@ fn should_record_shell(event: &CanonicalEvent) -> bool {
     ];
 
     !NOISE.contains(&base)
+}
+
+fn is_shell_noise_cmd(cmd: &str) -> bool {
+    let trimmed = cmd.trim();
+    if trimmed.contains("| pbcopy")
+        || trimmed.contains("| pbpaste")
+        || trimmed.contains("pbcopy")
+        || trimmed.contains("pbpaste")
+    {
+        return true;
+    }
+
+    let first = trimmed.split_whitespace().next().unwrap_or("");
+    let base = first.rsplit('/').next().unwrap_or(first);
+
+    const NOISE: &[&str] = &[
+        "cat", "head", "tail", "wc", "less", "more", "open", "tee", "touch", "stat", "file",
+    ];
+
+    if NOISE.contains(&base) {
+        return true;
+    }
+
+    if base == "rm" {
+        let lower = trimmed.to_lowercase();
+        return lower.contains("~/.")
+            || lower.contains("/.cursor")
+            || lower.contains("/.agent")
+            || lower.contains("node_modules");
+    }
+
+    false
+}
+
+fn is_exploratory_failure(cmd: &str) -> bool {
+    is_shell_noise_cmd(cmd)
 }
 
 fn should_record_git(event: &CanonicalEvent) -> bool {
@@ -163,6 +207,13 @@ mod tests {
     fn skips_chronicle_focus() {
         let mut event = CanonicalEvent::new("chronicle-ui", EventCategory::Os, "process.focus");
         event.metadata = serde_json::json!({"app_name": "chronicle-ui"});
+        assert!(!should_record(&event));
+    }
+
+    #[test]
+    fn skips_cat_pbcopy() {
+        let mut event = CanonicalEvent::new("zsh", EventCategory::Shell, "command.failed");
+        event.metadata = serde_json::json!({"command": "cat .cursor/rules/foo.md | pbcopy"});
         assert!(!should_record(&event));
     }
 

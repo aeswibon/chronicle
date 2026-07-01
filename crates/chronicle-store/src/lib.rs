@@ -374,14 +374,22 @@ impl Store {
         Ok(count)
     }
 
-    pub fn upsert_project(&self, name: &str, path: &str, language: Option<&str>) -> SqlResult<()> {
+    pub fn upsert_project(
+        &self,
+        name: &str,
+        path: &str,
+        language: Option<&str>,
+        active_at: i64,
+    ) -> SqlResult<()> {
         let mut stmt = self.conn.prepare_cached(
             "INSERT INTO projects (name, path, last_active, language)
              VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(name) DO UPDATE SET last_active = ?3, language = COALESCE(?4, language)",
+             ON CONFLICT(name) DO UPDATE SET
+               path = excluded.path,
+               last_active = MAX(projects.last_active, excluded.last_active),
+               language = COALESCE(excluded.language, projects.language)",
         )?;
-        let now = chrono::Utc::now().timestamp_millis();
-        stmt.execute(params![name, path, now, language])?;
+        stmt.execute(params![name, path, active_at, language])?;
         Ok(())
     }
 
@@ -403,6 +411,13 @@ impl Store {
             }
         }
         Ok(removed)
+    }
+
+    pub fn delete_sessions_between(&self, start: i64, end_exclusive: i64) -> SqlResult<usize> {
+        self.conn.execute(
+            "DELETE FROM sessions WHERE started_at >= ?1 AND started_at < ?2",
+            params![start, end_exclusive],
+        )
     }
 
     pub fn insert_session(&self, session: &chronicle_core::Session) -> SqlResult<()> {
@@ -439,7 +454,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_type, started_at, ended_at, duration_ms, project, span_count, event_count, summary
              FROM sessions WHERE started_at >= ?1 AND started_at <= ?2
-             ORDER BY started_at DESC",
+             ORDER BY started_at DESC, ended_at DESC",
         )?;
         let rows = stmt.query_map(params![since, until], |row| {
             let session_type: String = row.get(1)?;
@@ -571,9 +586,9 @@ mod tests {
     #[test]
     fn test_prune_non_repo_projects() {
         let store = Store::open_in_memory().unwrap();
-        store.upsert_project("ghostty", "ghostty", None).unwrap();
+        store.upsert_project("ghostty", "ghostty", None, 1).unwrap();
         store
-            .upsert_project("chronicle", "/tmp/chronicle", None)
+            .upsert_project("chronicle", "/tmp/chronicle", None, 2)
             .unwrap();
         std::fs::create_dir_all("/tmp/chronicle/.git").unwrap();
 
@@ -591,10 +606,10 @@ mod tests {
     fn test_upsert_project() {
         let store = setup_store();
         store
-            .upsert_project("chronicle", "/dev/chronicle", Some("Rust"))
+            .upsert_project("chronicle", "/dev/chronicle", Some("Rust"), 1000)
             .unwrap();
         store
-            .upsert_project("chronicle", "/dev/chronicle", Some("Rust"))
+            .upsert_project("chronicle", "/dev/chronicle", Some("Rust"), 2000)
             .unwrap(); // upsert
     }
 

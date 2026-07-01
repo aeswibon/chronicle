@@ -1,5 +1,6 @@
 use chronicle_core::{CanonicalEvent, ProjectRecord, Span};
 use chronicle_ipc::{Client, DaemonRequest, DaemonResponse, SearchMode};
+use crate::daemon_manage;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -203,6 +204,18 @@ async fn summarize_day_fallback(
 }
 
 #[tauri::command]
+pub async fn summarize_today(state: State<'_, DaemonState>) -> Result<SummarizeResult, String> {
+    let now = chrono::Local::now();
+    let since = now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|naive| naive.and_local_timezone(chrono::Local).single())
+        .map(|dt| dt.timestamp_millis())
+        .unwrap_or_else(|| now.timestamp_millis());
+    summarize_day(state, since, None).await
+}
+
+#[tauri::command]
 pub async fn summarize_day(
     state: State<'_, DaemonState>,
     since: i64,
@@ -210,7 +223,7 @@ pub async fn summarize_day(
 ) -> Result<SummarizeResult, String> {
     let socket_path = state.socket_path.clone();
     let mut client = Client::connect(&socket_path).await?;
-    let until = until.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    let until = until.unwrap_or_else(|| chrono::Local::now().timestamp_millis());
 
     match client
         .request(DaemonRequest::SummarizeDay {
@@ -452,46 +465,19 @@ pub async fn install_shell_hook(
 }
 
 #[tauri::command]
+pub async fn ensure_daemon() -> Result<String, String> {
+    tokio::task::spawn_blocking(daemon_manage::ensure_daemon_running)
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok("Chronicle is capturing activity in the background.".into())
+}
+
+#[tauri::command]
 pub async fn restart_daemon() -> Result<(), String> {
-    tokio::task::spawn_blocking(|| {
-        #[cfg(target_os = "macos")]
-        {
-            let release = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../target/release/chronicle-daemon");
-            if release.is_file() {
-                let _ = std::process::Command::new(&release)
-                    .arg("install")
-                    .status();
-            }
-            let uid = std::process::Command::new("id")
-                .arg("-u")
-                .output()
-                .map_err(|e| e.to_string())?;
-            let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
-            let label = format!("gui/{uid}/com.chronicle.daemon");
-            let status = std::process::Command::new("launchctl")
-                .args(["kickstart", "-k", &label])
-                .status()
-                .map_err(|e| e.to_string())?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err(
-                    "launchctl kickstart failed — install the daemon with chronicle-daemon install"
-                        .into(),
-                )
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = std::process::Command::new("pkill")
-                .args(["-f", "chronicle-daemon"])
-                .status();
-            Err("daemon restart is only supported on macOS via launchctl".into())
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(daemon_manage::restart_daemon)
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(())
 }
 
 #[tauri::command]

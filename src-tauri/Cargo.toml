@@ -24,4 +24,5 @@ chronicle-config = { path = "../crates/chronicle-config" }
 chronicle-hooks = { path = "../crates/chronicle-hooks" }
 chronicle-ipc = { path = "../crates/chronicle-ipc" }
 chronicle-ai = { path = "../crates/chronicle-ai" }
-chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+chrono = { version = "0.4", features = ["serde", "clock"] }

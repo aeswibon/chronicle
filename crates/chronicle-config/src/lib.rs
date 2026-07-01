@@ -111,6 +111,18 @@ pub fn config_path() -> PathBuf {
         .join(".chronicle/config.toml")
 }
 
+pub fn default_socket_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".chronicle/chronicle.sock")
+}
+
+pub fn default_store_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".chronicle/chronicle.db")
+}
+
 pub fn load() -> ChronicleConfig {
     let path = config_path();
     if !path.exists() {

@@ -99,7 +99,15 @@ fn single_event_label(event: &CanonicalEvent) -> Option<&'static str> {
 
 fn shell_label(event: &CanonicalEvent) -> Option<&'static str> {
     let cmd = event.metadata.get("command")?.as_str()?.to_lowercase();
-    if matches_test_cmd(&cmd) {
+    if cmd.contains("git push") {
+        Some("push")
+    } else if cmd.contains("git commit") {
+        Some("commit")
+    } else if cmd.contains("git merge") {
+        Some("merge")
+    } else if cmd.contains("git pull") {
+        Some("pull")
+    } else if matches_test_cmd(&cmd) {
         Some("test iteration")
     } else if matches_debug_cmd(&cmd) {
         Some("debugging")
@@ -215,6 +223,17 @@ fn matches_build_cmd(cmd: &str) -> bool {
 mod tests {
     use super::*;
     use chronicle_core::CanonicalEvent;
+
+    #[test]
+    fn labels_shell_git_push() {
+        let mut e = CanonicalEvent::new("zsh", EventCategory::Shell, "command.completed");
+        e.metadata = json!({"command": "git push origin master"});
+        annotate_event(&mut e);
+        assert_eq!(
+            e.metadata.get("activity_label").and_then(|v| v.as_str()),
+            Some("push")
+        );
+    }
 
     #[test]
     fn labels_cargo_test() {

@@ -542,6 +542,7 @@ dependencies = [
  "chronicle-hooks",
  "chronicle-ipc",
  "chrono",
+ "dirs",
  "serde",
  "serde_json",
  "tauri",

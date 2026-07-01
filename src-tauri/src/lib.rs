@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod daemon_manage;
 pub mod icons;
 
 use std::sync::Mutex;
@@ -14,8 +15,16 @@ pub struct DaemonState {
 pub fn run() {
     tauri::Builder::default()
         .manage(DaemonState {
-            socket_path: "/tmp/chronicle.sock".into(),
+            socket_path: daemon_manage::default_socket_string(),
             client: Mutex::new(None),
+        })
+        .setup(|_app| {
+            std::thread::spawn(|| {
+                if let Err(e) = daemon_manage::ensure_daemon_running() {
+                    eprintln!("chronicle ensure_daemon: {e}");
+                }
+            });
+            Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
@@ -30,12 +39,14 @@ pub fn run() {
             commands::get_errors,
             commands::get_sessions,
             commands::summarize_day,
+            commands::summarize_today,
             commands::get_project_context,
             commands::get_span_detail,
             commands::get_config,
             commands::set_config,
             commands::install_shell_hook,
             commands::restart_daemon,
+            commands::ensure_daemon,
             commands::list_projects,
             commands::start_event_stream,
             commands::resolve_app_icon,

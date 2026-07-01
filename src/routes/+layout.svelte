@@ -14,6 +14,13 @@
       daemonConnected = true;
     } catch {
       daemonConnected = false;
+      try {
+        await invoke('ensure_daemon');
+        await invoke('get_status');
+        daemonConnected = true;
+      } catch {
+        daemonConnected = false;
+      }
     }
   }
 
