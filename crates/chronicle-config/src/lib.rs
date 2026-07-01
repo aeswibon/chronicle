@@ -29,12 +29,39 @@ impl Default for CollectorsConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrivacyConfig {
+    /// Browser domains to record when non-empty (e.g. github.com).
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
+    #[serde(default = "default_true")]
+    pub strip_query_params: bool,
+    /// Delete events/spans older than this many days; None keeps all data.
+    #[serde(default)]
+    pub retention_days: Option<u32>,
+    #[serde(default = "default_true")]
+    pub redact_shell_secrets: bool,
+}
+
+impl Default for PrivacyConfig {
+    fn default() -> Self {
+        Self {
+            allowed_domains: Vec::new(),
+            strip_query_params: true,
+            retention_days: None,
+            redact_shell_secrets: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct ChronicleConfig {
     #[serde(default)]
     pub watch_dirs: Vec<String>,
     #[serde(default)]
     pub collectors: CollectorsConfig,
+    #[serde(default)]
+    pub privacy: PrivacyConfig,
 }
 
 pub fn config_path() -> PathBuf {
@@ -86,5 +113,13 @@ git = true
         assert!(!cfg.collectors.shell);
         assert!(cfg.collectors.git);
         assert!(cfg.collectors.window_focus);
+    }
+
+    #[test]
+    fn privacy_defaults() {
+        let cfg: ChronicleConfig = toml::from_str("watch_dirs = []\n").unwrap();
+        assert!(cfg.privacy.strip_query_params);
+        assert!(cfg.privacy.redact_shell_secrets);
+        assert!(cfg.privacy.allowed_domains.is_empty());
     }
 }

@@ -192,9 +192,18 @@ pub struct CollectorsInfo {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct PrivacyInfo {
+    pub allowed_domains: Vec<String>,
+    pub strip_query_params: bool,
+    pub retention_days: Option<u32>,
+    pub redact_shell_secrets: bool,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct ConfigInfo {
     pub watch_dirs: Vec<String>,
     pub collectors: CollectorsInfo,
+    pub privacy: PrivacyInfo,
 }
 
 impl From<chronicle_config::CollectorsConfig> for CollectorsInfo {
@@ -219,6 +228,28 @@ impl From<CollectorsInfo> for chronicle_config::CollectorsConfig {
     }
 }
 
+impl From<chronicle_config::PrivacyConfig> for PrivacyInfo {
+    fn from(p: chronicle_config::PrivacyConfig) -> Self {
+        Self {
+            allowed_domains: p.allowed_domains,
+            strip_query_params: p.strip_query_params,
+            retention_days: p.retention_days,
+            redact_shell_secrets: p.redact_shell_secrets,
+        }
+    }
+}
+
+impl From<PrivacyInfo> for chronicle_config::PrivacyConfig {
+    fn from(p: PrivacyInfo) -> Self {
+        Self {
+            allowed_domains: p.allowed_domains,
+            strip_query_params: p.strip_query_params,
+            retention_days: p.retention_days,
+            redact_shell_secrets: p.redact_shell_secrets,
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn get_config(_state: State<'_, DaemonState>) -> Result<ConfigInfo, String> {
     tokio::task::spawn_blocking(|| {
@@ -226,6 +257,7 @@ pub async fn get_config(_state: State<'_, DaemonState>) -> Result<ConfigInfo, St
         ConfigInfo {
             watch_dirs: cfg.watch_dirs,
             collectors: cfg.collectors.into(),
+            privacy: cfg.privacy.into(),
         }
     })
     .await
@@ -237,11 +269,13 @@ pub async fn set_config(
     _state: State<'_, DaemonState>,
     watch_dirs: Vec<String>,
     collectors: CollectorsInfo,
+    privacy: PrivacyInfo,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let cfg = chronicle_config::ChronicleConfig {
             watch_dirs,
             collectors: collectors.into(),
+            privacy: privacy.into(),
         };
         chronicle_config::save(&cfg).map_err(|e| e.to_string())
     })

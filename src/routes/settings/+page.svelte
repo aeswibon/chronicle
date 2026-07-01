@@ -12,6 +12,12 @@
     git: true,
     shell: true,
   });
+  let privacy = $state({
+    allowed_domains: '',
+    strip_query_params: true,
+    retention_days: null,
+    redact_shell_secrets: true,
+  });
   let shellChoice = $state('zsh');
   let configMessage = $state('');
   let hookMessage = $state('');
@@ -28,6 +34,14 @@
       if (cfg.collectors) {
         collectors = { ...cfg.collectors };
       }
+      if (cfg.privacy) {
+        privacy = {
+          allowed_domains: (cfg.privacy.allowed_domains ?? []).join('\n'),
+          strip_query_params: cfg.privacy.strip_query_params ?? true,
+          retention_days: cfg.privacy.retention_days ?? null,
+          redact_shell_secrets: cfg.privacy.redact_shell_secrets ?? true,
+        };
+      }
     } catch {}
   });
 
@@ -42,6 +56,15 @@
       await invoke('set_config', {
         watch_dirs: dirs,
         collectors: { ...collectors },
+        privacy: {
+          allowed_domains: privacy.allowed_domains
+            .split('\n')
+            .map((s) => s.trim())
+            .filter(Boolean),
+          strip_query_params: privacy.strip_query_params,
+          retention_days: privacy.retention_days,
+          redact_shell_secrets: privacy.redact_shell_secrets,
+        },
       });
       configMessage = 'Saved. Restart the daemon for watch dirs and collector toggles to take effect.';
     } catch (e) {
@@ -108,6 +131,45 @@
         </label>
       {/each}
     </div>
+  </section>
+
+  <section class="mb-8">
+    <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Privacy</h3>
+    <p class="text-sm text-[var(--text-secondary)] leading-relaxed mb-3">
+      Browser allowlist (one domain per line; empty = record all). Retention prunes on daemon start.
+    </p>
+    <textarea
+      bind:value={privacy.allowed_domains}
+      rows="3"
+      placeholder="github.com&#10;stackoverflow.com"
+      class="w-full text-xs font-mono bg-[var(--bg-muted)] border border-[var(--border)] rounded-lg px-4 py-3 text-[var(--text)] resize-y mb-4"
+    ></textarea>
+    <div class="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl divide-y divide-[var(--border-subtle)] mb-4">
+      <label class="flex items-start gap-4 px-5 py-4 cursor-pointer">
+        <input type="checkbox" class="mt-1 accent-[var(--accent)]" bind:checked={privacy.strip_query_params} />
+        <span>
+          <span class="text-sm text-[var(--text)] block">Strip URL query parameters</span>
+          <span class="text-xs text-[var(--text-muted)]">Browser events omit ?query and #fragment</span>
+        </span>
+      </label>
+      <label class="flex items-start gap-4 px-5 py-4 cursor-pointer">
+        <input type="checkbox" class="mt-1 accent-[var(--accent)]" bind:checked={privacy.redact_shell_secrets} />
+        <span>
+          <span class="text-sm text-[var(--text)] block">Redact shell secrets</span>
+          <span class="text-xs text-[var(--text-muted)]">Mask API_KEY, TOKEN, PASSWORD in command strings</span>
+        </span>
+      </label>
+    </div>
+    <label class="block text-sm text-[var(--text-secondary)] mb-2">
+      Retention (days)
+      <input
+        type="number"
+        min="1"
+        placeholder="Keep forever"
+        bind:value={privacy.retention_days}
+        class="mt-1 w-32 text-sm bg-[var(--bg-muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--text)]"
+      />
+    </label>
   </section>
 
   <section class="mb-8">

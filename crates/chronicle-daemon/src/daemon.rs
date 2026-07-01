@@ -44,6 +44,19 @@ impl Daemon {
         let _lock = crate::singleton::DaemonLock::acquire(&lock_path)?;
 
         let store = Store::open(store_path).map_err(|e| anyhow::anyhow!("store: {e}"))?;
+        if let Some(days) = chronicle_config::load().privacy.retention_days {
+            let cutoff =
+                chrono::Utc::now().timestamp_millis() - i64::from(days) * 86_400_000;
+            match store.prune_before(cutoff) {
+                Ok((events, spans)) if events + spans > 0 => {
+                    info!(
+                        "retention: pruned {events} events and {spans} spans older than {days} days"
+                    );
+                }
+                Err(e) => warn!("retention prune failed: {e}"),
+                _ => {}
+            }
+        }
         let store = Arc::new(Mutex::new(store));
 
         let watch_dirs: Vec<_> = self
@@ -195,6 +208,7 @@ async fn process_events(
     let mut rule_engine = crate::rule_engine::RuleEngine::new();
 
     while let Some(mut event) = rx.recv().await {
+        event_filter::sanitize_event(&mut event);
         if !event_filter::should_record(&event) {
             continue;
         }
@@ -371,15 +385,18 @@ async fn handle_connection(
                         DaemonResponse::Config {
                             watch_dirs: cfg.watch_dirs,
                             collectors: cfg.collectors,
+                            privacy: cfg.privacy,
                         }
                     }
                     DaemonRequest::SetConfig {
                         watch_dirs,
                         collectors,
+                        privacy,
                     } => {
                         let mut cfg = chronicle_config::load();
                         cfg.watch_dirs = watch_dirs;
                         cfg.collectors = collectors;
+                        cfg.privacy = privacy;
                         match chronicle_config::save(&cfg) {
                             Ok(()) => DaemonResponse::Ack {
                                 event_id: "config_saved".into(),

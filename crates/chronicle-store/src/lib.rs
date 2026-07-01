@@ -404,6 +404,17 @@ impl Store {
         }
         Ok(removed)
     }
+
+    /// Remove events and spans older than `cutoff_ms`. Returns (events_deleted, spans_deleted).
+    pub fn prune_before(&self, cutoff_ms: i64) -> SqlResult<(usize, usize)> {
+        let events = self
+            .conn
+            .execute("DELETE FROM events WHERE timestamp < ?1", params![cutoff_ms])?;
+        let spans = self
+            .conn
+            .execute("DELETE FROM spans WHERE started_at < ?1", params![cutoff_ms])?;
+        Ok((events, spans))
+    }
 }
 
 fn is_repo_path(path: &std::path::Path) -> bool {
