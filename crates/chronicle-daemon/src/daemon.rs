@@ -45,8 +45,7 @@ impl Daemon {
 
         let store = Store::open(store_path).map_err(|e| anyhow::anyhow!("store: {e}"))?;
         if let Some(days) = chronicle_config::load().privacy.retention_days {
-            let cutoff =
-                chrono::Utc::now().timestamp_millis() - i64::from(days) * 86_400_000;
+            let cutoff = chrono::Utc::now().timestamp_millis() - i64::from(days) * 86_400_000;
             match store.prune_before(cutoff) {
                 Ok((events, spans)) if events + spans > 0 => {
                     info!(
@@ -304,11 +303,7 @@ async fn handle_connection(
                             message: format!("query failed: {e}"),
                         },
                     },
-                    DaemonRequest::Search {
-                        query,
-                        mode,
-                        limit,
-                    } => {
+                    DaemonRequest::Search { query, mode, limit } => {
                         let query = match mode {
                             chronicle_ipc::SearchMode::Semantic => {
                                 chronicle_ai::expand_search_query(&query)
@@ -322,7 +317,7 @@ async fn handle_connection(
                                 message: format!("search failed: {e}"),
                             },
                         }
-                    },
+                    }
                     DaemonRequest::ListProjects { limit } => match store.query_projects(limit) {
                         Ok(projects) => DaemonResponse::Projects { projects },
                         Err(e) => DaemonResponse::Error {
@@ -427,11 +422,9 @@ async fn handle_connection(
                             },
                         }
                     }
-                    DaemonRequest::ListPlugins => {
-                        DaemonResponse::Plugins {
-                            plugins: chronicle_plugin::discover_plugins(),
-                        }
-                    }
+                    DaemonRequest::ListPlugins => DaemonResponse::Plugins {
+                        plugins: chronicle_plugin::discover_plugins(),
+                    },
                     DaemonRequest::GetConfig => {
                         let cfg = chronicle_config::load();
                         DaemonResponse::Config {

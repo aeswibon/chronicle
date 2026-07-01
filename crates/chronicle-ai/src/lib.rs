@@ -66,18 +66,21 @@ pub fn daily_summary(spans: &[Span], events: &[CanonicalEvent]) -> String {
         if let Some(p) = &event.project {
             projects.insert(p.clone());
         }
-        if let Some(label) = event.metadata.get("activity_label").and_then(|v| v.as_str()) {
+        if let Some(label) = event
+            .metadata
+            .get("activity_label")
+            .and_then(|v| v.as_str())
+        {
             labels.insert(label.to_string());
         }
-        if event.category == chronicle_core::EventCategory::Shell {
-            if event
+        if event.category == chronicle_core::EventCategory::Shell
+            && event
                 .metadata
                 .get("exit_code")
                 .and_then(|v| v.as_str())
                 .is_some_and(|c| c != "0")
-            {
-                errors += 1;
-            }
+        {
+            errors += 1;
         }
     }
 
@@ -104,7 +107,10 @@ pub fn daily_summary(spans: &[Span], events: &[CanonicalEvent]) -> String {
         parts.push(format!("Activities: {}", list.join(", ")));
     }
     if errors > 0 {
-        parts.push(format!("{errors} failed command{}", if errors == 1 { "" } else { "s" }));
+        parts.push(format!(
+            "{errors} failed command{}",
+            if errors == 1 { "" } else { "s" }
+        ));
     }
 
     parts.join(". ") + "."
@@ -156,7 +162,11 @@ mod tests {
     #[test]
     fn summary_lists_projects() {
         let span = Span::new(chronicle_core::SpanType::Coding, Some("chronicle".into()));
-        let events = vec![CanonicalEvent::new("zsh", EventCategory::Shell, "command.completed")];
+        let events = vec![CanonicalEvent::new(
+            "zsh",
+            EventCategory::Shell,
+            "command.completed",
+        )];
         let text = daily_summary(&[span], &events);
         assert!(text.contains("chronicle"));
     }

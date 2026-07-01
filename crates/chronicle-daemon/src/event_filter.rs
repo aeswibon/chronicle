@@ -48,9 +48,10 @@ fn should_record_browser(event: &CanonicalEvent, privacy: &PrivacyConfig) -> boo
     if domain.is_empty() {
         return false;
     }
-    privacy.allowed_domains.iter().any(|allowed| {
-        domain == allowed || domain.ends_with(&format!(".{allowed}"))
-    })
+    privacy
+        .allowed_domains
+        .iter()
+        .any(|allowed| domain == allowed || domain.ends_with(&format!(".{allowed}")))
 }
 
 fn strip_browser_query_params(event: &mut CanonicalEvent) {
@@ -187,7 +188,8 @@ mod tests {
     #[test]
     fn redacts_api_key_in_command() {
         let mut event = CanonicalEvent::new("zsh", EventCategory::Shell, "command.completed");
-        event.metadata = serde_json::json!({"command": "curl -H API_KEY=sk-secret123 https://api.example.com"});
+        event.metadata =
+            serde_json::json!({"command": "curl -H API_KEY=sk-secret123 https://api.example.com"});
         sanitize_event(&mut event);
         let cmd = event.metadata["command"].as_str().unwrap();
         assert!(!cmd.contains("sk-secret"));

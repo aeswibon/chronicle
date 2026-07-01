@@ -1,11 +1,6 @@
 //! Local HTTP ingress for browser and other extensions (127.0.0.1 only).
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 use chronicle_core::CanonicalEvent;
 use std::net::SocketAddr;
 use tokio::sync::mpsc;

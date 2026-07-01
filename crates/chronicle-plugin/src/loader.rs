@@ -78,7 +78,8 @@ mod tests {
 
     #[test]
     fn parses_json_manifest() {
-        let dir = std::env::temp_dir().join(format!("chronicle-plugin-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("chronicle-plugin-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(
             dir.join("plugin.json"),

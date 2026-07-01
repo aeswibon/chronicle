@@ -258,10 +258,7 @@ impl ChronicleMcp {
         let since = since_timestamp(since_ms);
         match connect(&self.socket).await {
             Ok(mut client) => match client
-                .request(DaemonRequest::GetSessions {
-                    since,
-                    until: None,
-                })
+                .request(DaemonRequest::GetSessions { since, until: None })
                 .await
             {
                 Ok(DaemonResponse::Sessions { sessions }) => text_result(
@@ -276,7 +273,9 @@ impl ChronicleMcp {
         }
     }
 
-    #[tool(description = "Generate and store a rule-based daily work summary from spans and events")]
+    #[tool(
+        description = "Generate and store a rule-based daily work summary from spans and events"
+    )]
     async fn get_daily_summary(
         &self,
         Parameters(TimelineParams { since_ms, limit: _ }): Parameters<TimelineParams>,
@@ -284,10 +283,7 @@ impl ChronicleMcp {
         let since = since_timestamp(since_ms);
         match connect(&self.socket).await {
             Ok(mut client) => match client
-                .request(DaemonRequest::SummarizeDay {
-                    since,
-                    until: None,
-                })
+                .request(DaemonRequest::SummarizeDay { since, until: None })
                 .await
             {
                 Ok(DaemonResponse::DailySummary { summary, session }) => text_result(
