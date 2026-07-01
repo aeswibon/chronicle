@@ -5,16 +5,24 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const triple = execSync('rustc --print host-tuple', { cwd: root }).toString().trim();
+const triple =
+  process.env.TAURI_ENV_TARGET_TRIPLE?.trim() ||
+  execSync('rustc --print host-tuple', { cwd: root }).toString().trim();
 const ext = process.platform === 'win32' ? '.exe' : '';
 
-execSync('cargo build --release -p chronicle-daemon', { cwd: root, stdio: 'inherit' });
+const targetFlag = triple ? ` --target ${triple}` : '';
+execSync(`cargo build --release -p chronicle-daemon${targetFlag}`, {
+  cwd: root,
+  stdio: 'inherit',
+});
 
-const src = path.join(root, 'target/release/chronicle-daemon') + ext;
+const src = path.join(root, 'target', triple, 'release/chronicle-daemon') + ext;
+const srcFallback = path.join(root, 'target/release/chronicle-daemon') + ext;
+const from = fs.existsSync(src) ? src : srcFallback;
 const destDir = path.join(root, 'src-tauri/binaries');
 const dest = path.join(destDir, `chronicle-daemon-${triple}${ext}`);
 
 fs.mkdirSync(destDir, { recursive: true });
-fs.copyFileSync(src, dest);
+fs.copyFileSync(from, dest);
 fs.chmodSync(dest, 0o755);
-console.log(`Bundled daemon → ${dest}`);
+console.log(`Bundled daemon (${triple}) → ${dest}`);

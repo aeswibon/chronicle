@@ -168,7 +168,8 @@ fn scan_reflog_file(
     state: &mut GitScanState,
     tx: &tokio_mpsc::Sender<CanonicalEvent>,
 ) -> usize {
-    if path.file_name().and_then(|n| n.to_str()) == Some("HEAD") && path.parent().is_some_and(|p| p.ends_with(".git"))
+    if path.file_name().and_then(|n| n.to_str()) == Some("HEAD")
+        && path.parent().is_some_and(|p| p.ends_with(".git"))
     {
         return scan_head_pointer(path, state, tx);
     }
@@ -208,8 +209,7 @@ fn scan_reflog_file(
         let is_new = idx >= prev_count;
         let in_backfill = prev_count == 0
             && is_backfill_candidate(&rel)
-            && parse_reflog_timestamp_ms(line)
-                .is_some_and(|ts| ts >= cutoff);
+            && parse_reflog_timestamp_ms(line).is_some_and(|ts| ts >= cutoff);
         if !is_new && !in_backfill {
             continue;
         }
@@ -240,7 +240,11 @@ fn scan_head_pointer(
         Err(_) => return 0,
     };
     let key = path.to_string_lossy().to_string();
-    if state.head_content.get(&key).is_some_and(|prev| prev == &content) {
+    if state
+        .head_content
+        .get(&key)
+        .is_some_and(|prev| prev == &content)
+    {
         return 0;
     }
 
@@ -279,10 +283,10 @@ fn parse_reflog_line(path: &Path, line: &str) -> Option<CanonicalEvent> {
 
     let git_type = classify_git_event(&rel, message)?;
     let project = detect_project_from_path(path)?;
-    let timestamp = parse_reflog_timestamp_ms(line).unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    let timestamp =
+        parse_reflog_timestamp_ms(line).unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
 
-    let mut event = CanonicalEvent::new("git", EventCategory::Git, git_type)
-        .with_project(&project);
+    let mut event = CanonicalEvent::new("git", EventCategory::Git, git_type).with_project(&project);
     event.timestamp = timestamp;
 
     let meta = event.metadata.as_object_mut().unwrap();
@@ -358,10 +362,8 @@ pub fn parse_reflog_timestamp_ms(line: &str) -> Option<i64> {
     let header = line.split('\t').next()?;
     let parts: Vec<&str> = header.split_whitespace().collect();
     for (i, part) in parts.iter().enumerate() {
-        if part.starts_with('+') || part.starts_with('-') {
-            if i > 0 {
-                return parts[i - 1].parse::<i64>().ok().map(|s| s * 1000);
-            }
+        if (part.starts_with('+') || part.starts_with('-')) && i > 0 {
+            return parts[i - 1].parse::<i64>().ok().map(|s| s * 1000);
         }
     }
     None
@@ -372,10 +374,7 @@ fn project_path_for_git(path: &Path) -> Option<String> {
 }
 
 fn detect_project_from_path(path: &Path) -> Option<String> {
-    repo_root(path).and_then(|p| {
-        p.file_name()
-            .map(|n| n.to_string_lossy().to_string())
-    })
+    repo_root(path).and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
 }
 
 fn repo_root(path: &Path) -> Option<PathBuf> {
@@ -400,10 +399,7 @@ mod tests {
     #[test]
     fn classify_push_on_remote_ref() {
         assert_eq!(
-            classify_git_event(
-                "refs/remotes/origin/master",
-                "update by push"
-            ),
+            classify_git_event("refs/remotes/origin/master", "update by push"),
             Some("push.completed")
         );
     }
@@ -411,10 +407,7 @@ mod tests {
     #[test]
     fn classify_pull_fast_forward_on_head() {
         assert_eq!(
-            classify_git_event(
-                "HEAD",
-                "pull origin master: Fast-forward"
-            ),
+            classify_git_event("HEAD", "pull origin master: Fast-forward"),
             Some("pull.completed")
         );
     }
@@ -422,10 +415,7 @@ mod tests {
     #[test]
     fn classify_fetch_on_remote() {
         assert_eq!(
-            classify_git_event(
-                "refs/remotes/origin/master",
-                "fetch origin: fast-forward"
-            ),
+            classify_git_event("refs/remotes/origin/master", "fetch origin: fast-forward"),
             Some("pull.completed")
         );
     }

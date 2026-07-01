@@ -27,12 +27,6 @@ jobs:
           target: ${{ matrix.target }}
       - uses: oven-sh/setup-bun@v2
 
-      - name: Install system deps
-        run: |
-          case "${{ matrix.target }}" in
-            *linux*) sudo apt-get update && sudo apt-get install -y webkit2gtk-4.1 ;;
-          esac
-
       - name: Install frontend deps
         run: bun install --frozen-lockfile
 
@@ -49,16 +43,24 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
 
-      - name: Compute checksums
+      - name: Rename DMG for release
         run: |
-          cd src-tauri/target/${{ matrix.target }}/release/bundle/dmg
-          shasum -a 256 *.dmg > checksums.txt
-          cat checksums.txt
+          cd "src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
+          dmg=( *.dmg )
+          if [ ! -f "${dmg[0]}" ]; then
+            echo "No DMG found" >&2
+            exit 1
+          fi
+          cp "${dmg[0]}" "chronicle-${{ matrix.arch }}.dmg"
+          shasum -a 256 chronicle-${{ matrix.arch }}.dmg > checksums-${{ matrix.arch }}.txt
+          ls -la
 
       - uses: actions/upload-artifact@v4
         with:
           name: chronicle-${{ matrix.arch }}
-          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/chronicle-${{ matrix.arch }}.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/checksums-${{ matrix.arch }}.txt
 
   release:
     name: Create release
@@ -74,10 +76,26 @@ jobs:
 
       - name: Generate release notes
         run: |
-          echo "## Chronicle v${GITHUB_REF_NAME#v}" > release-notes.md
-          echo "" >> release-notes.md
-          echo "### Downloads" >> release-notes.md
-          for f in *.dmg; do
+          VERSION="${GITHUB_REF_NAME#v}"
+          cat > release-notes.md <<EOF
+          ## Chronicle v${VERSION}
+
+          First public release of Chronicle — a local developer observability app for macOS.
+
+          ### Highlights
+          - Timeline, projects, sessions, and search over local dev activity
+          - Git reflog capture (commits, pushes, pulls) with automatic backfill
+          - Per-user daemon auto-start (no admin password)
+          - Optional AI daily summaries via Ollama
+
+          ### Install
+          1. Download the DMG for your Mac (Apple Silicon → arm64, Intel → x64)
+          2. Open **Chronicle.app** and allow the background service to start
+          3. Optional: Settings → Install shell hook for terminal capture
+
+          ### Downloads
+          EOF
+          for f in chronicle-*.dmg; do
             echo "- [$f](https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/$f)" >> release-notes.md
           done
 
@@ -85,5 +103,5 @@ jobs:
         with:
           body_path: release-notes.md
           files: |
-            *.dmg
-            *.txt
+            chronicle-*.dmg
+            checksums-*.txt

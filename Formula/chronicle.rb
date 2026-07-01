@@ -18,6 +18,10 @@ cask "chronicle" do
   app "Chronicle.app"
 
   zap trash: [
+    "~/.chronicle",
+    "~/Library/LaunchAgents/com.chronicle.daemon.plist",
+    "~/Library/Logs/chronicle.log",
+    "~/Library/Logs/chronicle.err",
     "~/Library/Application Support/chronicle",
     "~/Library/Caches/com.chronicle.app",
     "~/Library/Preferences/com.chronicle.app.plist",
