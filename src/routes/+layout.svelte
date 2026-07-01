@@ -27,6 +27,7 @@
   const navItems = [
     { href: '/', label: 'Timeline' },
     { href: '/projects', label: 'Projects' },
+    { href: '/errors', label: 'Errors' },
     { href: '/search', label: 'Search' },
     { href: '/settings', label: 'Settings' },
   ];

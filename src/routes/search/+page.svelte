@@ -8,6 +8,7 @@
   let results = $state([]);
   let searched = $state(false);
   let searching = $state(false);
+  let semantic = $state(false);
 
   async function search() {
     const q = query.trim();
@@ -15,7 +16,7 @@
     searching = true;
     searched = true;
     try {
-      results = await invoke('search_events', { query: q, limit: 100 });
+      results = await invoke('search_events', { query: q, limit: 100, semantic });
     } catch {
       results = [];
     } finally {
@@ -27,22 +28,28 @@
 </script>
 
 <PageShell title="Search" description="Find events by app, project, or activity type across the last 30 days.">
-  <div class="flex gap-2 mb-8">
-    <input
-      type="text"
-      bind:value={query}
-      onkeydown={(e) => e.key === 'Enter' && search()}
-      placeholder="Search events..."
-      class="flex-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm text-[var(--text)] placeholder-[var(--text-muted)] outline-none focus:border-[var(--accent)]/50 transition-colors"
-    />
-    <button
-      type="button"
-      onclick={search}
-      disabled={!query.trim() || searching}
-      class="px-4 py-2.5 text-sm font-medium rounded-lg bg-[var(--accent)] text-white dark:text-zinc-900 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
-    >
-      {searching ? 'Searching…' : 'Search'}
-    </button>
+  <div class="flex flex-wrap items-center gap-4 mb-8">
+    <div class="flex gap-2 flex-1 min-w-[12rem]">
+      <input
+        type="text"
+        bind:value={query}
+        onkeydown={(e) => e.key === 'Enter' && search()}
+        placeholder="Search events..."
+        class="flex-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-lg px-4 py-2.5 text-sm text-[var(--text)] placeholder-[var(--text-muted)] outline-none focus:border-[var(--accent)]/50 transition-colors"
+      />
+      <button
+        type="button"
+        onclick={search}
+        disabled={!query.trim() || searching}
+        class="px-4 py-2.5 text-sm font-medium rounded-lg bg-[var(--accent)] text-white dark:text-zinc-900 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+      >
+        {searching ? 'Searching…' : 'Search'}
+      </button>
+    </div>
+    <label class="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
+      <input type="checkbox" class="accent-[var(--accent)]" bind:checked={semantic} />
+      Semantic search (experimental)
+    </label>
   </div>
 
   {#if !searched}

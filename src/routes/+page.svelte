@@ -10,6 +10,8 @@
     eventSubtitle,
     formatTime,
     formatDuration,
+    activityLabel,
+    spanActivityLabels,
   } from '$lib/format.js';
   import AppIcon from '$lib/components/AppIcon.svelte';
 
@@ -83,6 +85,9 @@
                 <div class="flex items-center gap-2.5">
                   <span class="w-1.5 h-1.5 rounded-full bg-[var(--accent)] shrink-0"></span>
                   <span class="text-sm font-medium text-[var(--text)] capitalize">{span.span_type}</span>
+                  {#each spanActivityLabels(span) as label}
+                    <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--accent-muted)] text-[var(--accent)]">{label}</span>
+                  {/each}
                   {#if span.duration_ms}
                     <span class="text-xs text-[var(--text-muted)]">{formatDuration(span.duration_ms)}</span>
                   {/if}
@@ -118,6 +123,11 @@
                       <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-[var(--bg-muted)] text-[var(--text-muted)]">
                         {eventCategoryLabel(item.event)}
                       </span>
+                      {#if activityLabel(item.event)}
+                        <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--accent-muted)] text-[var(--accent)]">
+                          {activityLabel(item.event)}
+                        </span>
+                      {/if}
                       {#if item.count > 1}
                         <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--accent-muted)] text-[var(--accent)]">
                           ×{item.count}

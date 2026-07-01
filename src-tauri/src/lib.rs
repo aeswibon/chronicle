@@ -33,6 +33,7 @@ pub fn run() {
             commands::get_config,
             commands::set_config,
             commands::install_shell_hook,
+            commands::restart_daemon,
             commands::list_projects,
             commands::start_event_stream,
             commands::resolve_app_icon,

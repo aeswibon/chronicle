@@ -306,14 +306,23 @@ async fn handle_connection(
                     },
                     DaemonRequest::Search {
                         query,
-                        mode: _,
+                        mode,
                         limit,
-                    } => match store.search_events(&query, limit) {
-                        Ok(events) => DaemonResponse::TimelineEvents { events },
-                        Err(e) => DaemonResponse::Error {
-                            code: 500,
-                            message: format!("search failed: {e}"),
-                        },
+                    } => {
+                        let query = match mode {
+                            chronicle_ipc::SearchMode::Semantic => {
+                                tracing::debug!("semantic search: using keyword FTS until chronicle-ai indexing");
+                                query
+                            }
+                            chronicle_ipc::SearchMode::Keyword => query,
+                        };
+                        match store.search_events(&query, limit) {
+                            Ok(events) => DaemonResponse::TimelineEvents { events },
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("search failed: {e}"),
+                            },
+                        }
                     },
                     DaemonRequest::ListProjects { limit } => match store.query_projects(limit) {
                         Ok(projects) => DaemonResponse::Projects { projects },

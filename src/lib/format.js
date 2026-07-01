@@ -74,7 +74,20 @@ function humanizeType(type) {
   return type.replaceAll('.', ' · ').replaceAll('_', ' ');
 }
 
-/** @param {Record<string, unknown>} event @returns {string} */
+/** @param {Record<string, unknown>} event */
+export function activityLabel(event) {
+  const meta = /** @type {Record<string, string>} */ (event.metadata ?? {});
+  return meta.activity_label ?? null;
+}
+
+/** @param {Record<string, unknown>} span */
+export function spanActivityLabels(span) {
+  const meta = /** @type {Record<string, string[]>} */ (span.metadata ?? {});
+  const labels = meta.activity_labels;
+  return Array.isArray(labels) ? labels : [];
+}
+
+/** @param {Record<string, unknown>} event */
 export function eventLabel(event) {
   const meta = /** @type {Record<string, string>} */ (event.metadata ?? {});
   const category = event.category;

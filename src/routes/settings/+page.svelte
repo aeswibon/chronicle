@@ -23,6 +23,8 @@
   let hookMessage = $state('');
   let saving = $state(false);
   let installingHook = $state(false);
+  let restarting = $state(false);
+  let restartMessage = $state('');
 
   onMount(async () => {
     try {
@@ -90,6 +92,20 @@
       hookMessage = String(e);
     } finally {
       installingHook = false;
+    }
+  }
+
+  async function restartDaemon() {
+    restarting = true;
+    restartMessage = '';
+    try {
+      await invoke('restart_daemon');
+      restartMessage = 'Daemon restarted.';
+      status = await invoke('get_status');
+    } catch (e) {
+      restartMessage = String(e);
+    } finally {
+      restarting = false;
     }
   }
 
@@ -271,6 +287,19 @@
         <div class="flex items-center justify-between px-5 py-4">
           <span class="text-sm text-[var(--text-secondary)]">Socket</span>
           <code class="text-xs text-[var(--text-muted)] font-mono">/tmp/chronicle.sock</code>
+        </div>
+        <div class="px-5 py-4 border-t border-[var(--border-subtle)]">
+          <button
+            type="button"
+            onclick={restartDaemon}
+            disabled={restarting}
+            class="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 transition-colors disabled:opacity-50"
+          >
+            {restarting ? 'Restarting…' : 'Restart daemon'}
+          </button>
+          {#if restartMessage}
+            <p class="text-xs text-[var(--text-muted)] mt-2">{restartMessage}</p>
+          {/if}
         </div>
       {:else}
         <div class="px-5 py-16 text-center">

@@ -82,14 +82,20 @@ pub async fn search_events(
     state: State<'_, DaemonState>,
     query: String,
     limit: u32,
+    semantic: Option<bool>,
 ) -> Result<Vec<CanonicalEvent>, String> {
     let socket_path = state.socket_path.clone();
     let mut client = Client::connect(&socket_path).await?;
+    let mode = if semantic.unwrap_or(false) {
+        SearchMode::Semantic
+    } else {
+        SearchMode::Keyword
+    };
 
     match client
         .request(DaemonRequest::Search {
             query,
-            mode: SearchMode::Keyword,
+            mode,
             limit,
         })
         .await?
@@ -290,6 +296,41 @@ pub async fn install_shell_hook(
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         chronicle_hooks::install(shell.as_deref()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn restart_daemon() -> Result<(), String> {
+    tokio::task::spawn_blocking(|| {
+        #[cfg(target_os = "macos")]
+        {
+            let uid = std::process::Command::new("id")
+                .arg("-u")
+                .output()
+                .map_err(|e| e.to_string())?;
+            let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+            let label = format!("gui/{uid}/com.chronicle.daemon");
+            let status = std::process::Command::new("launchctl")
+                .args(["kickstart", "-k", &label])
+                .status()
+                .map_err(|e| e.to_string())?;
+            if status.success() {
+                return Ok(());
+            }
+            return Err(
+                "launchctl kickstart failed — install the daemon with chronicle-daemon install"
+                    .into(),
+            );
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = std::process::Command::new("pkill")
+                .args(["-f", "chronicle-daemon"])
+                .status();
+            Err("daemon restart is only supported on macOS via launchctl".into())
+        }
     })
     .await
     .map_err(|e| e.to_string())?
