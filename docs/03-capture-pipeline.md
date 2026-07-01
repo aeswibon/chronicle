@@ -90,14 +90,12 @@ pub struct CanonicalEvent {
 
 ### Window focus (`window_focus.rs`)
 
-- **Mechanism:** Periodic poll (~2s) via System Events AppleScript
+- **Mechanism:** Poll reflogs every 20s (plus 72h backfill on first sight); rescans repos every 2m
 - **Emits:** `os` / `process.focus`
-- **Metadata:** `app_name`, `bundle_id`, `window_title`
-- **Project detection:** Parses window title for absolute paths; uses `project::detect_project_from_title`
+- **Metadata:** `app_name`, `bundle_id` (`window_title` omitted unless a future opt-in path adds it)
+- **Project detection:** Primarily from filesystem/git collectors; window-title parsing is not used on the default macOS path
 
-**Design note:** Uses System Events only — never `tell application "X"` — to avoid macOS "Choose Application" permission dialogs. App icons are resolved separately in the Tauri layer via a compiled Swift helper.
-
-Focus collection runs on `spawn_blocking` because AppleScript is synchronous.
+**Design note:** Uses `lsappinfo` instead of AppleScript/System Events so the daemon does not trigger macOS Accessibility or Automation permission dialogs. App icons are resolved separately in the Tauri layer via a compiled Swift helper.
 
 ### Filesystem (`filesystem.rs`)
 
@@ -113,19 +111,21 @@ Focus collection runs on `spawn_blocking` because AppleScript is synchronous.
 
 ### Git (`git.rs`)
 
-- **Mechanism:** `notify` on each repo's `.git/logs/HEAD` and `.git/HEAD`
-- **Discovery:** `discover_repo_paths` walks watch trees (depth 4) for `.git` or `Cargo.toml`
-- **Emits:** Parsed reflog / HEAD changes
+- **Mechanism:** Poll all `.git/logs/**` every 20s; 72h backfill on first sight (HEAD + `origin/*`); repo rescan every 2m
+- **Discovery:** `discover_repo_paths` walks watch trees (depth 8) for `.git` or `Cargo.toml`
+- **Emits:** Parsed reflog lines with real timestamps from reflog headers
 
-| Reflog prefix | `type` |
-|---------------|--------|
+| Reflog pattern | `type` |
+|----------------|--------|
 | `commit` | `commit.created` |
 | `merge` | `merge.completed` |
 | `rebase` | `rebase.completed` |
-| checkout | `branch.checkout` |
-| other | dropped (`git.other`) |
+| `pull` / `fast-forward` | `pull.completed` |
+| `fetch` | `fetch.completed` |
+| `push` / `update by push` | `push.completed` |
+| checkout / switch | `branch.checkout` |
 
-Fingerprinting avoids duplicate events when mtime changes without content change.
+Cursors persist in `~/.chronicle/git_cursors.json` so restarts do not duplicate events.
 
 ### Shell (`shell.rs`)
 

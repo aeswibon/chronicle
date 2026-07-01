@@ -139,7 +139,7 @@
   ]);
 
   const collectorRows = [
-    { key: 'window_focus', label: 'Window focus', hint: 'Active app and window title (macOS)' },
+    { key: 'window_focus', label: 'Window focus', hint: 'Active app name (no Accessibility permission on macOS)' },
     { key: 'filesystem', label: 'Filesystem', hint: 'Source file create/delete under watch dirs' },
     { key: 'git', label: 'Git', hint: 'Commits, checkouts, merges via reflog' },
     { key: 'shell', label: 'Shell hook', hint: 'Terminal commands via UDP (requires hook install)' },

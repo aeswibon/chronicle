@@ -35,9 +35,17 @@ pub fn resolve_daemon_binary() -> Option<PathBuf> {
         }
     }
 
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/release/chronicle-daemon");
-    if dev.is_file() {
-        return Some(dev);
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for rel in [
+        "../target/debug/chronicle-daemon",
+        "../target/release/chronicle-daemon",
+        "target/debug/chronicle-daemon",
+        "target/release/chronicle-daemon",
+    ] {
+        let candidate = manifest.join(rel);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
     }
 
     None
@@ -74,69 +82,183 @@ pub fn ensure_daemon_running() -> Result<(), String> {
     let binary = resolve_daemon_binary()
         .ok_or_else(|| "Chronicle daemon binary not found. Reinstall the app.".to_string())?;
 
-    let install = Command::new(&binary).arg("install").output();
-    match install {
-        Ok(out) if out.status.success() => {}
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            return Err(format!("daemon install failed: {stderr}"));
+    // Dev builds: avoid launchd (KeepAlive fights the singleton lock). Spawn once in user space.
+    if cfg!(debug_assertions) {
+        unload_launch_agent();
+        spawn_detached_daemon(&binary, &socket)?;
+        if wait_for_daemon(&socket, 12) {
+            return Ok(());
         }
-        Err(e) => return Err(format!("could not run chronicle-daemon install: {e}")),
+        return Err(
+            "Chronicle could not start the background service. Build chronicle-daemon (cargo build -p chronicle-daemon)."
+                .into(),
+        );
     }
 
-    if activate_launch_agent().is_err() {
-        // launchd blocked (MDM, etc.) — run detached in user space instead.
-        spawn_detached_daemon(&binary, &socket)?;
-        if !wait_for_daemon(&socket, 12) {
-            return Err(
-                "Chronicle could not start the background service. Check Settings → Restart daemon."
-                    .into(),
-            );
-        }
+    if needs_plist_install(&binary) {
+        run_daemon_install(&binary)?;
+    }
+
+    if kickstart_launch_agent() && wait_for_daemon(&socket, 8) {
         return Ok(());
     }
 
-    if !wait_for_daemon(&socket, 8) {
-        spawn_detached_daemon(&binary, &socket)?;
-        if !wait_for_daemon(&socket, 8) {
-            return Err("Daemon installed but not responding. Try Settings → Restart daemon.".into());
-        }
+    if !is_launch_agent_loaded()
+        && activate_launch_agent().is_ok()
+        && wait_for_daemon(&socket, 8)
+    {
+        return Ok(());
     }
 
-    Ok(())
+    spawn_detached_daemon(&binary, &socket)?;
+    if wait_for_daemon(&socket, 12) {
+        return Ok(());
+    }
+
+    Err("Chronicle could not start the background service. Check Settings → Restart daemon.".into())
 }
 
 pub fn restart_daemon() -> Result<(), String> {
     let binary = resolve_daemon_binary();
-    if let Some(ref path) = binary {
-        let _ = Command::new(path).arg("install").status();
+    let socket = default_socket_string();
+
+    if cfg!(debug_assertions) {
+        unload_launch_agent();
+        if let Some(ref path) = binary {
+            spawn_detached_daemon(path, &socket)?;
+            if wait_for_daemon(&socket, 8) {
+                return Ok(());
+            }
+        }
+        return Err("Could not restart the Chronicle daemon.".into());
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        let uid = Command::new("id")
-            .arg("-u")
-            .output()
-            .map_err(|e| e.to_string())?;
-        let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
-        let label = format!("gui/{uid}/com.chronicle.daemon");
-        let status = Command::new("launchctl")
-            .args(["kickstart", "-k", &label])
-            .status()
-            .map_err(|e| e.to_string())?;
-        if status.success() && wait_for_daemon(&default_socket_string(), 8) {
-            return Ok(());
+    if let Some(ref path) = binary {
+        if needs_plist_install(path) {
+            let _ = run_daemon_install(path);
         }
     }
 
+    if kickstart_launch_agent() && wait_for_daemon(&socket, 8) {
+        return Ok(());
+    }
+
     if let Some(path) = binary {
-        spawn_detached_daemon(&path, &default_socket_string())?;
-        if wait_for_daemon(&default_socket_string(), 8) {
+        spawn_detached_daemon(&path, &socket)?;
+        if wait_for_daemon(&socket, 8) {
             return Ok(());
         }
     }
 
     Err("Could not restart the Chronicle daemon.".into())
+}
+
+fn launch_agent_plist_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join("Library/LaunchAgents/com.chronicle.daemon.plist"))
+}
+
+fn launch_agent_service_id() -> Option<String> {
+    let uid = Command::new("id").arg("-u").output().ok()?;
+    let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+    Some(format!("gui/{uid}/com.chronicle.daemon"))
+}
+
+fn launch_agent_domain() -> Option<String> {
+    let uid = Command::new("id").arg("-u").output().ok()?;
+    let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+    Some(format!("gui/{uid}"))
+}
+
+fn is_launch_agent_loaded() -> bool {
+    let Some(service) = launch_agent_service_id() else {
+        return false;
+    };
+    Command::new("launchctl")
+        .args(["print", &service])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn unload_launch_agent() {
+    let Some(service) = launch_agent_service_id() else {
+        return;
+    };
+    let _ = Command::new("launchctl")
+        .args(["bootout", &service])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+fn kickstart_launch_agent() -> bool {
+    let Some(service) = launch_agent_service_id() else {
+        return false;
+    };
+    Command::new("launchctl")
+        .args(["kickstart", "-k", &service])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn plist_program_path(plist_path: &Path) -> Option<PathBuf> {
+    let content = std::fs::read_to_string(plist_path).ok()?;
+    let mut in_args = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == "<key>ProgramArguments</key>" {
+            in_args = true;
+            continue;
+        }
+        if in_args && trimmed.starts_with("<string>") && trimmed.ends_with("</string>") {
+            let inner = trimmed
+                .trim_start_matches("<string>")
+                .trim_end_matches("</string>");
+            return Some(PathBuf::from(inner));
+        }
+        if in_args && trimmed == "</array>" {
+            break;
+        }
+    }
+    None
+}
+
+fn needs_plist_install(binary: &Path) -> bool {
+    let Some(plist) = launch_agent_plist_path() else {
+        return true;
+    };
+    if !plist.is_file() {
+        return true;
+    }
+    let expected = binary.canonicalize().unwrap_or_else(|_| binary.to_path_buf());
+    match plist_program_path(&plist) {
+        Some(program) => {
+            let current = program.canonicalize().unwrap_or(program);
+            current != expected
+        }
+        None => true,
+    }
+}
+
+fn run_daemon_install(binary: &Path) -> Result<(), String> {
+    let install = Command::new(binary)
+        .arg("install")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output();
+    match install {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            Err(format!("daemon install failed: {stderr}"))
+        }
+        Err(e) => Err(format!("could not run chronicle-daemon install: {e}")),
+    }
 }
 
 fn activate_launch_agent() -> Result<(), String> {
@@ -147,37 +269,27 @@ fn activate_launch_agent() -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        let home = dirs::home_dir().ok_or_else(|| "no home directory".to_string())?;
-        let plist = home.join("Library/LaunchAgents/com.chronicle.daemon.plist");
+        let plist = launch_agent_plist_path().ok_or_else(|| "no home directory".to_string())?;
         if !plist.is_file() {
             return Err("LaunchAgent plist missing".into());
         }
 
-        let uid = Command::new("id")
-            .arg("-u")
-            .output()
-            .map_err(|e| e.to_string())?;
-        let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
-        let domain = format!("gui/{uid}");
+        let domain = launch_agent_domain().ok_or_else(|| "could not resolve uid".to_string())?;
         let plist_str = plist.to_string_lossy().to_string();
 
-        let _ = Command::new("launchctl")
-            .args(["bootout", &domain, &plist_str])
-            .status();
+        unload_launch_agent();
 
         let bootstrap = Command::new("launchctl")
             .args(["bootstrap", &domain, &plist_str])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .map_err(|e| e.to_string())?;
         if !bootstrap.success() {
             return Err("launchctl bootstrap failed".into());
         }
 
-        let kick = Command::new("launchctl")
-            .args(["kickstart", "-k", &format!("{domain}/com.chronicle.daemon")])
-            .status()
-            .map_err(|e| e.to_string())?;
-        if kick.success() {
+        if kickstart_launch_agent() {
             Ok(())
         } else {
             Err("launchctl kickstart failed".into())

@@ -86,7 +86,9 @@ async fn install_launchd(cli_watch: &[String]) -> anyhow::Result<()> {
 
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
     let plist_path = home.join("Library/LaunchAgents/com.chronicle.daemon.plist");
-    let daemon_path = std::env::current_exe()?;
+    let daemon_path = std::env::current_exe()?.canonicalize().unwrap_or_else(|_| {
+        std::env::current_exe().expect("current_exe")
+    });
     let store_path = chronicle_config::default_store_path();
     let socket_path = chronicle_config::default_socket_path();
     let log_dir = home.join("Library/Logs");
@@ -163,21 +165,28 @@ fn activate_launch_agent(plist_path: &std::path::Path) -> anyhow::Result<()> {
     let uid = std::process::Command::new("id").arg("-u").output()?;
     let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
     let domain = format!("gui/{uid}");
+    let service = format!("{domain}/com.chronicle.daemon");
     let plist_str = plist_path.to_string_lossy().to_string();
 
     let _ = std::process::Command::new("launchctl")
-        .args(["bootout", &domain, &plist_str])
+        .args(["bootout", &service])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status();
 
     let bootstrap = std::process::Command::new("launchctl")
         .args(["bootstrap", &domain, &plist_str])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()?;
     if !bootstrap.success() {
         anyhow::bail!("launchctl bootstrap exited with {}", bootstrap);
     }
 
     let kick = std::process::Command::new("launchctl")
-        .args(["kickstart", "-k", &format!("{domain}/com.chronicle.daemon")])
+        .args(["kickstart", "-k", &service])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()?;
     if kick.success() {
         Ok(())

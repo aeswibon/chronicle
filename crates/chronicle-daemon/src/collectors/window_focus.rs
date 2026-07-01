@@ -71,52 +71,117 @@ struct AppInfo {
 }
 
 fn get_frontmost_app_sync() -> Result<AppInfo, String> {
-    // System Events only — never `tell application appName` (triggers Choose Application).
-    let output = std::process::Command::new("osascript")
-        .args([
-            "-e",
-            r#"tell application "System Events"
-                set frontApp to first application process whose frontmost is true
-                set appName to name of frontApp
-                set bundleId to bundle identifier of frontApp
-                set winTitle to ""
-                try
-                    if (count of windows of frontApp) > 0 then
-                        set winTitle to name of front window of frontApp
-                    end if
-                end try
-                return appName & "|||" & bundleId & "|||" & winTitle
-            end tell"#,
-        ])
-        .output()
-        .map_err(|e| format!("osascript exec: {e}"))?;
+    #[cfg(target_os = "macos")]
+    {
+        get_frontmost_app_macos()
+    }
 
-    if !output.status.success() {
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("window_focus collector is only supported on macOS".into())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn get_frontmost_app_macos() -> Result<AppInfo, String> {
+    // lsappinfo uses LaunchServices — no Accessibility / Automation permission prompt.
+    // (AppleScript + System Events triggers "control this computer" for the daemon binary.)
+    let front = std::process::Command::new("/usr/bin/lsappinfo")
+        .arg("front")
+        .output()
+        .map_err(|e| format!("lsappinfo front: {e}"))?;
+    if !front.status.success() {
         return Err(format!(
-            "osascript: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "lsappinfo front: {}",
+            String::from_utf8_lossy(&front.stderr)
         ));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let parts: Vec<&str> = stdout.split("|||").collect();
-    if parts.len() < 2 {
-        return Err("unexpected osascript output".into());
+    let asn = parse_front_asn(&String::from_utf8_lossy(&front.stdout))
+        .ok_or_else(|| "lsappinfo front: could not parse ASN".to_string())?;
+
+    let info = std::process::Command::new("/usr/bin/lsappinfo")
+        .args(["info", "-only", "name,bundleID", &asn])
+        .output()
+        .map_err(|e| format!("lsappinfo info: {e}"))?;
+    if !info.status.success() {
+        return Err(format!(
+            "lsappinfo info: {}",
+            String::from_utf8_lossy(&info.stderr)
+        ));
     }
 
-    let name = parts[0].trim().to_string();
-    let mut bundle_id = parts[1].trim().to_string();
-    if bundle_id == "missing value" {
-        bundle_id.clear();
-    }
-    let window_title = parts
-        .get(2)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let stdout = String::from_utf8_lossy(&info.stdout);
+    let name = parse_lsappinfo_field(&stdout, "LSDisplayName")
+        .ok_or_else(|| "lsappinfo: missing app name".to_string())?;
+    let bundle_id = parse_lsappinfo_field(&stdout, "CFBundleIdentifier").unwrap_or_default();
 
     Ok(AppInfo {
         name,
         bundle_id,
-        window_title,
+        window_title: None,
     })
+}
+
+#[cfg(target_os = "macos")]
+fn parse_front_asn(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("ASN:") {
+            let asn = format!("ASN:{rest}");
+            return Some(asn.trim_end_matches(':').to_string());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn parse_lsappinfo_field(stdout: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"=");
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix(&needle) {
+            return parse_quoted_value(rest);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn parse_quoted_value(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+        return Some(raw[1..raw.len() - 1].to_string());
+    }
+    if raw == "[ NULL ]" || raw.is_empty() {
+        return None;
+    }
+    Some(raw.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_front_asn_from_lsappinfo_output() {
+        let sample = "ASN:0x0-0x9c89c8:\n\"Safari\" ASN:0x0-0x9c89c8: (in front)\n";
+        assert_eq!(
+            parse_front_asn(sample),
+            Some("ASN:0x0-0x9c89c8".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_lsappinfo_name_and_bundle() {
+        let sample = "\"LSDisplayName\"=\"Safari\"\n\"CFBundleIdentifier\"=\"com.apple.Safari\"\n";
+        assert_eq!(
+            parse_lsappinfo_field(sample, "LSDisplayName"),
+            Some("Safari".to_string())
+        );
+        assert_eq!(
+            parse_lsappinfo_field(sample, "CFBundleIdentifier"),
+            Some("com.apple.Safari".to_string())
+        );
+    }
 }

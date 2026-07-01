@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 
 const DEFAULT_WATCH_DIRS: &[&str] = &["~/Developer", "~/Desktop", "~/Documents"];
-const MAX_SCAN_DEPTH: usize = 4;
+const MAX_SCAN_DEPTH: usize = 8;
 
 /// Discover git/cargo repo roots under the given directories.
 pub fn discover_repo_paths(watch_dirs: &[PathBuf]) -> Vec<PathBuf> {

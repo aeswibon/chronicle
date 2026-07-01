@@ -127,6 +127,8 @@ fn git_label(event: &CanonicalEvent) -> Option<&'static str> {
         "branch.checkout" => Some("branch switch"),
         "rebase.completed" => Some("rebase"),
         "push.completed" => Some("push"),
+        "pull.completed" => Some("pull"),
+        "fetch.completed" => Some("fetch"),
         _ => None,
     }
 }
