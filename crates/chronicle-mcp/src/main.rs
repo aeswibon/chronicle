@@ -2,17 +2,16 @@ use anyhow::Context;
 use chronicle_ipc::{Client, DaemonRequest, DaemonResponse, SearchMode};
 use clap::Parser;
 use rmcp::{
-    handler::server::tool::ToolRouter,
-    handler::server::wrapper::Parameters,
-    model::*,
-    tool, tool_handler, tool_router,
-    transport::stdio,
-    ErrorData as McpError, ServerHandler, ServiceExt,
+    handler::server::tool::ToolRouter, handler::server::wrapper::Parameters, model::*, tool,
+    tool_handler, tool_router, transport::stdio, ErrorData as McpError, ServerHandler, ServiceExt,
 };
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(name = "chronicle-mcp", about = "MCP server for Chronicle developer activity")]
+#[command(
+    name = "chronicle-mcp",
+    about = "MCP server for Chronicle developer activity"
+)]
 struct Cli {
     #[arg(long, default_value = "/tmp/chronicle.sock")]
     socket: String,
@@ -79,7 +78,9 @@ fn text_result(body: String) -> Result<CallToolResult, McpError> {
 }
 
 fn error_result(message: impl std::fmt::Display) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::error(vec![Content::text(message.to_string())]))
+    Ok(CallToolResult::error(vec![Content::text(
+        message.to_string(),
+    )]))
 }
 
 #[tool_router]
