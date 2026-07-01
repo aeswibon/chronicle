@@ -25,10 +25,7 @@ pub fn daily_summary(since: i64, spans: &[Span], events: &[CanonicalEvent]) -> S
         }
     }
 
-    let mut project_names: Vec<_> = projects
-        .into_iter()
-        .map(|(name, count)| (name, count))
-        .collect();
+    let mut project_names: Vec<_> = projects.into_iter().collect();
     project_names.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let project_names: Vec<String> = project_names
         .into_iter()
