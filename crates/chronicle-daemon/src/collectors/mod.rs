@@ -1,5 +1,6 @@
 pub mod filesystem;
 pub mod git;
+pub mod macos_window;
 pub mod shell;
 pub mod window_focus;
 

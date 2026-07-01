@@ -16,6 +16,7 @@
     formatTime,
     formatPathMiddle,
     isSpanActive,
+    isListableSpan,
   } from '$lib/format.js';
 
   let projectName = $derived(decodeURIComponent($page.params.name ?? ''));
@@ -55,6 +56,7 @@
   }
 
   let feed = $derived(collapseTimelineEvents(events));
+  let listableSpans = $derived(spans.filter((s) => isListableSpan(s)));
 
   onMount(() => {
     load();
@@ -91,11 +93,11 @@
       </div>
     {/if}
 
-    {#if spans.length > 0}
+    {#if listableSpans.length > 0}
       <section class="mb-10">
         <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Sessions</h3>
         <div class="space-y-2">
-          {#each spans as span}
+          {#each listableSpans as span}
             <a
               href="/sessions/{span.id}"
               class="block bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-4 py-3.5 hover:border-[var(--accent)]/30 transition-colors"

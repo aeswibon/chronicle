@@ -6,14 +6,21 @@ use tracing::{debug, warn};
 use crate::event_filter;
 use crate::project;
 
+use super::macos_window;
+
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+struct FocusSnapshot {
+    app: String,
+    window: Option<String>,
+}
 
 pub struct WindowFocusCollector;
 
 impl WindowFocusCollector {
     pub async fn run(self, tx: mpsc::Sender<CanonicalEvent>) {
         debug!("window_focus collector started (polling every 2s)");
-        let mut last_app: Option<String> = None;
+        let mut last: Option<FocusSnapshot> = None;
 
         loop {
             tokio::time::sleep(POLL_INTERVAL).await;
@@ -30,13 +37,25 @@ impl WindowFocusCollector {
             };
 
             let app_key = info.name.to_lowercase();
-            if last_app.as_ref() == Some(&app_key) {
+            let window_title = info.window_title.clone();
+            let changed = match &last {
+                None => true,
+                Some(prev) => prev.app != app_key || prev.window != window_title,
+            };
+            if !changed {
                 continue;
             }
 
-            let mut event = CanonicalEvent::new(&info.name, EventCategory::Os, "process.focus");
+            let app_changed = last.as_ref().is_none_or(|prev| prev.app != app_key);
+            let event_type = if app_changed {
+                "process.focus"
+            } else {
+                "window.focus"
+            };
 
-            if let Some(title) = info.window_title.as_deref() {
+            let mut event = CanonicalEvent::new(&info.name, EventCategory::Os, event_type);
+
+            if let Some(title) = window_title.as_deref() {
                 if let Some((project, root)) = project::detect_project_from_title(title) {
                     event = event.with_project(&project);
                     let meta = event.metadata.as_object_mut().unwrap();
@@ -47,19 +66,36 @@ impl WindowFocusCollector {
             let meta = event.metadata.as_object_mut().unwrap();
             meta.insert("app_name".into(), info.name.clone().into());
             meta.insert("bundle_id".into(), info.bundle_id.clone().into());
-            if let Some(title) = info.window_title {
+            meta.insert("pid".into(), info.pid.into());
+            if let Some(title) = window_title {
                 meta.insert("window_title".into(), title.into());
             }
 
             if !event_filter::should_record(&event) {
+                last = Some(FocusSnapshot {
+                    app: app_key,
+                    window: event
+                        .metadata
+                        .get("window_title")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
+                });
                 continue;
             }
 
+            let saved_window = event
+                .metadata
+                .get("window_title")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
             if tx.send(event).await.is_err() {
                 warn!("window_focus: receiver dropped");
                 return;
             }
-            last_app = Some(app_key);
+            last = Some(FocusSnapshot {
+                app: app_key,
+                window: saved_window,
+            });
         }
     }
 }
@@ -67,6 +103,7 @@ impl WindowFocusCollector {
 struct AppInfo {
     name: String,
     bundle_id: String,
+    pid: i32,
     window_title: Option<String>,
 }
 
@@ -84,10 +121,8 @@ fn get_frontmost_app_sync() -> Result<AppInfo, String> {
 
 #[cfg(target_os = "macos")]
 fn get_frontmost_app_macos() -> Result<AppInfo, String> {
-    use lsappinfo_parse::{parse_front_asn, parse_lsappinfo_field};
+    use lsappinfo_parse::{parse_front_asn, parse_lsappinfo_field, parse_lsappinfo_pid};
 
-    // lsappinfo uses LaunchServices — no Accessibility / Automation permission prompt.
-    // (AppleScript + System Events triggers "control this computer" for the daemon binary.)
     let front = std::process::Command::new("/usr/bin/lsappinfo")
         .arg("front")
         .output()
@@ -103,7 +138,7 @@ fn get_frontmost_app_macos() -> Result<AppInfo, String> {
         .ok_or_else(|| "lsappinfo front: could not parse ASN".to_string())?;
 
     let info = std::process::Command::new("/usr/bin/lsappinfo")
-        .args(["info", "-only", "name,bundleID", &asn])
+        .args(["info", "-only", "name,bundleID,pid", &asn])
         .output()
         .map_err(|e| format!("lsappinfo info: {e}"))?;
     if !info.status.success() {
@@ -117,11 +152,14 @@ fn get_frontmost_app_macos() -> Result<AppInfo, String> {
     let name = parse_lsappinfo_field(&stdout, "LSDisplayName")
         .ok_or_else(|| "lsappinfo: missing app name".to_string())?;
     let bundle_id = parse_lsappinfo_field(&stdout, "CFBundleIdentifier").unwrap_or_default();
+    let pid = parse_lsappinfo_pid(&stdout).unwrap_or(0);
+    let window_title = macos_window::window_title_for_pid(pid);
 
     Ok(AppInfo {
         name,
         bundle_id,
-        window_title: None,
+        pid,
+        window_title,
     })
 }
 
@@ -149,6 +187,19 @@ mod lsappinfo_parse {
         None
     }
 
+    pub fn parse_lsappinfo_pid(stdout: &str) -> Option<i32> {
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("\"pid\"=") {
+                return rest.trim().parse().ok();
+            }
+            if let Some(rest) = trimmed.strip_prefix("pid = ") {
+                return rest.split_whitespace().next()?.parse().ok();
+            }
+        }
+        None
+    }
+
     fn parse_quoted_value(raw: &str) -> Option<String> {
         let raw = raw.trim();
         if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
@@ -163,7 +214,7 @@ mod lsappinfo_parse {
 
 #[cfg(test)]
 mod tests {
-    use super::lsappinfo_parse::{parse_front_asn, parse_lsappinfo_field};
+    use super::lsappinfo_parse::{parse_front_asn, parse_lsappinfo_field, parse_lsappinfo_pid};
 
     #[test]
     fn parse_front_asn_from_lsappinfo_output() {
@@ -185,5 +236,11 @@ mod tests {
             parse_lsappinfo_field(sample, "CFBundleIdentifier"),
             Some("com.apple.Safari".to_string())
         );
+    }
+
+    #[test]
+    fn parse_lsappinfo_pid_field() {
+        let sample = "\"pid\"=3706\n\"LSDisplayName\"=\"Ghostty\"\n";
+        assert_eq!(parse_lsappinfo_pid(sample), Some(3706));
     }
 }

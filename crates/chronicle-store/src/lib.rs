@@ -28,6 +28,21 @@ impl Store {
             .execute_batch(include_str!("../migrations/001_initial.sql"))?;
         self.conn
             .execute_batch(include_str!("../migrations/002_fts_triggers.sql"))?;
+        self.migrate_sessions_summary_source()?;
+        Ok(())
+    }
+
+    fn migrate_sessions_summary_source(&self) -> SqlResult<()> {
+        let has_column = self
+            .conn
+            .prepare("PRAGMA table_info(sessions)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|name| name == "summary_source");
+        if !has_column {
+            self.conn
+                .execute("ALTER TABLE sessions ADD COLUMN summary_source TEXT", [])?;
+        }
         Ok(())
     }
 
@@ -420,6 +435,13 @@ impl Store {
         )
     }
 
+    pub fn delete_session(&self, id: &uuid::Uuid) -> SqlResult<usize> {
+        self.conn.execute(
+            "DELETE FROM sessions WHERE id = ?1",
+            params![id.to_string()],
+        )
+    }
+
     pub fn insert_session(&self, session: &chronicle_core::Session) -> SqlResult<()> {
         let session_type = match session.session_type {
             chronicle_core::SessionType::Focus => "focus",
@@ -428,8 +450,8 @@ impl Store {
             chronicle_core::SessionType::Unknown => "unknown",
         };
         self.conn.execute(
-            "INSERT OR REPLACE INTO sessions (id, session_type, started_at, ended_at, duration_ms, project, span_count, event_count, summary)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT OR REPLACE INTO sessions (id, session_type, started_at, ended_at, duration_ms, project, span_count, event_count, summary, summary_source)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 session.id.to_string(),
                 session_type,
@@ -440,6 +462,7 @@ impl Store {
                 session.span_count,
                 session.event_count,
                 session.summary,
+                session.summary_source,
             ],
         )?;
         Ok(())
@@ -452,7 +475,7 @@ impl Store {
     ) -> SqlResult<Vec<chronicle_core::Session>> {
         let until = until.unwrap_or(i64::MAX);
         let mut stmt = self.conn.prepare(
-            "SELECT id, session_type, started_at, ended_at, duration_ms, project, span_count, event_count, summary
+            "SELECT id, session_type, started_at, ended_at, duration_ms, project, span_count, event_count, summary, summary_source
              FROM sessions WHERE started_at >= ?1 AND started_at <= ?2
              ORDER BY started_at DESC, ended_at DESC",
         )?;
@@ -475,9 +498,94 @@ impl Store {
                 span_count: row.get(6)?,
                 event_count: row.get(7)?,
                 summary: row.get(8)?,
+                summary_source: row.get(9)?,
             })
         })?;
         rows.collect()
+    }
+
+    pub fn has_session_in_range(&self, start: i64, end_exclusive: i64) -> SqlResult<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE started_at >= ?1 AND started_at < ?2",
+            params![start, end_exclusive],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn update_event_metadata(&self, event: &CanonicalEvent) -> SqlResult<()> {
+        self.conn.execute(
+            "UPDATE events SET metadata = ?1 WHERE id = ?2",
+            params![event.metadata.to_string(), event.id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn query_events_needing_enrichment(&self, limit: u32) -> SqlResult<Vec<CanonicalEvent>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, timestamp, source, category, type, project, workspace, duration_ms, metadata
+             FROM events
+             WHERE metadata NOT LIKE '%\"report_line\"%'
+             ORDER BY timestamp DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            let metadata_str: String = row.get(8)?;
+            Ok(CanonicalEvent {
+                id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                timestamp: row.get(1)?,
+                source: row.get(2)?,
+                category: serde_json::from_str(&row.get::<_, String>(3)?)
+                    .unwrap_or(chronicle_core::EventCategory::Os),
+                r#type: row.get(4)?,
+                project: row.get(5)?,
+                workspace: row.get(6)?,
+                duration_ms: row.get(7)?,
+                metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
+                version: "1.0".into(),
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Remove low-signal git noise (historical backfill floods) and terminal junk.
+    pub fn prune_noise_events(&self) -> SqlResult<usize> {
+        let git_deleted = self.conn.execute(
+            "DELETE FROM events WHERE category = '\"Git\"' AND type IN ('fetch.completed', 'pull.completed', 'branch.checkout')",
+            [],
+        )?;
+
+        let mut shell_deleted = 0usize;
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, timestamp, source, category, type, project, workspace, duration_ms, metadata
+             FROM events WHERE category = '\"Shell\"'",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let metadata_str: String = row.get(8)?;
+            Ok(CanonicalEvent {
+                id: row.get::<_, String>(0)?.parse().unwrap_or_default(),
+                timestamp: row.get(1)?,
+                source: row.get(2)?,
+                category: chronicle_core::EventCategory::Shell,
+                r#type: row.get(4)?,
+                project: row.get(5)?,
+                workspace: row.get(6)?,
+                duration_ms: row.get(7)?,
+                metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
+                version: "1.0".into(),
+            })
+        })?;
+        for event in rows.flatten() {
+            if chronicle_ai::summary_filter::is_summary_noise(&event) {
+                self.conn.execute(
+                    "DELETE FROM events WHERE id = ?1",
+                    params![event.id.to_string()],
+                )?;
+                shell_deleted += 1;
+            }
+        }
+
+        Ok(git_deleted + shell_deleted)
     }
 
     /// Remove events and spans older than `cutoff_ms`. Returns (events_deleted, spans_deleted).
@@ -620,6 +728,27 @@ mod tests {
         assert_eq!(store.count_spans().unwrap(), 0);
         let events = store.query_events(0, None, 10).unwrap();
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_delete_session() {
+        let store = setup_store();
+        let session = chronicle_core::Session {
+            id: uuid::Uuid::new_v4(),
+            session_type: chronicle_core::SessionType::Focus,
+            started_at: 1000,
+            ended_at: Some(2000),
+            duration_ms: Some(1000),
+            project: None,
+            span_count: 1,
+            event_count: 2,
+            summary: Some("test summary".into()),
+            summary_source: Some("rules".into()),
+        };
+        store.insert_session(&session).unwrap();
+        assert_eq!(store.query_sessions(0, None).unwrap().len(), 1);
+        assert_eq!(store.delete_session(&session.id).unwrap(), 1);
+        assert_eq!(store.query_sessions(0, None).unwrap().len(), 0);
     }
 
     #[test]

@@ -2,13 +2,14 @@
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
   import PageShell from '$lib/components/PageShell.svelte';
-  import { formatDateTime, formatDuration } from '$lib/format.js';
+  import { formatDateTime, formatDuration, isListableSummary } from '$lib/format.js';
 
   let sessions = $state([]);
   let loading = $state(true);
   let error = $state('');
   let notice = $state('');
   let generating = $state(false);
+  let deletingId = $state(null);
   let summarySource = $state('');
   /** @type {{ summary: string; started_at: number; session_type: string; span_count: number; event_count: number; source?: string } | null} */
   let preview = $state(null);
@@ -19,6 +20,7 @@
     try {
       const since = Date.now() - 30 * 86400000;
       sessions = await invoke('get_sessions', { since, until: null });
+      sessions = sessions.filter((s) => isListableSummary(s));
       sessions.sort((a, b) => b.started_at - a.started_at);
     } catch (e) {
       error = String(e);
@@ -58,10 +60,27 @@
     }
   }
 
+  /** @param {{ id: string; started_at: number }} session */
+  async function deleteSession(session) {
+    if (!confirm(`Delete the summary for ${formatDateTime(session.started_at)}?`)) {
+      return;
+    }
+    deletingId = session.id;
+    error = '';
+    try {
+      await invoke('delete_session', { id: session.id });
+      sessions = sessions.filter((s) => s.id !== session.id);
+    } catch (e) {
+      error = String(e);
+    } finally {
+      deletingId = null;
+    }
+  }
+
   onMount(load);
 </script>
 
-<PageShell title="Sessions" description="AI rollups persisted from daily activity summaries.">
+<PageShell title="Sessions" description="Daily rollups from your activity. Enable AI in Settings for richer summaries, or use rules mode by default.">
   <div class="flex items-center gap-3 mb-6">
     <button
       type="button"
@@ -121,11 +140,29 @@
                 <p class="text-xs text-[var(--text-muted)] mt-1">{session.project}</p>
               {/if}
             </div>
-            <div class="text-right text-xs text-[var(--text-muted)] tabular-nums">
+            <div class="text-right text-xs text-[var(--text-muted)] tabular-nums shrink-0">
               <p>{formatDateTime(session.started_at)}</p>
+              {#if session.summary_source}
+                <span
+                  class="inline-block mt-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border"
+                  class:border-[var(--accent)]={session.summary_source === 'ai'}
+                  class:text-[var(--accent)]={session.summary_source === 'ai'}
+                  class:border-[var(--border)]={session.summary_source !== 'ai'}
+                >
+                  {session.summary_source === 'ai' ? 'AI' : 'Rules'}
+                </span>
+              {/if}
               {#if session.duration_ms}
                 <p class="mt-1">{formatDuration(session.duration_ms)}</p>
               {/if}
+              <button
+                type="button"
+                onclick={() => deleteSession(session)}
+                disabled={deletingId === session.id}
+                class="mt-2 text-[11px] text-[var(--text-muted)] hover:text-red-400 transition-colors disabled:opacity-50"
+              >
+                {deletingId === session.id ? 'Deleting…' : 'Delete'}
+              </button>
             </div>
           </div>
           {#if session.summary}

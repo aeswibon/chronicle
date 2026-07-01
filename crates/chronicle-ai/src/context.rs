@@ -1,6 +1,8 @@
 //! Structured digest for LLM daily summaries.
 
-use crate::summary_filter::{is_high_signal, is_meaningful_failure, is_summary_noise};
+use crate::summary_filter::{
+    is_high_signal, is_meaningful_failure, is_summary_noise, rank_projects,
+};
 use chronicle_core::{CanonicalEvent, Span};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -97,22 +99,21 @@ impl DayReportContext {
 }
 
 fn compute_stats(spans: &[Span], events: &[CanonicalEvent]) -> DayStats {
-    let mut projects: HashSet<String> = HashSet::new();
     let mut intents: HashSet<String> = HashSet::new();
     let mut error_count = 0u32;
     let mut focus_ms = 0u64;
 
+    let event_refs: Vec<&CanonicalEvent> = events.iter().collect();
+    let ranked = rank_projects(spans, &event_refs);
+    let project_count = ranked.len();
+
     for span in spans {
-        if let Some(p) = &span.project {
-            projects.insert(p.clone());
+        if span.span_type != chronicle_core::SpanType::Idle {
+            focus_ms += span.duration_ms.unwrap_or(0);
         }
-        focus_ms += span.duration_ms.unwrap_or(0);
     }
 
     for event in events {
-        if let Some(p) = &event.project {
-            projects.insert(p.clone());
-        }
         if let Some(i) = event.metadata.get("intent").and_then(|v| v.as_str()) {
             intents.insert(i.to_string());
         }
@@ -121,19 +122,19 @@ fn compute_stats(spans: &[Span], events: &[CanonicalEvent]) -> DayStats {
         }
     }
 
-    let mut project_list: Vec<_> = projects.into_iter().collect();
-    project_list.sort();
+    let project_list: Vec<String> = ranked.into_iter().take(5).map(|(name, _)| name).collect();
     let mut intent_list: Vec<_> = intents.into_iter().collect();
     intent_list.sort();
+    let focus_minutes = (focus_ms / 60_000).min(12 * 60);
 
     DayStats {
         span_count: spans.len(),
         event_count: events.len(),
-        project_count: project_list.len(),
+        project_count,
         error_count,
         projects: project_list,
         intents: intent_list,
-        focus_minutes: focus_ms / 60_000,
+        focus_minutes,
     }
 }
 

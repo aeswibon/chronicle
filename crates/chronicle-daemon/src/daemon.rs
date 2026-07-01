@@ -1,5 +1,6 @@
 use crate::collectors;
 use crate::event_filter;
+use crate::maintenance;
 use crate::project;
 use crate::span_processor::SpanProcessor;
 use chronicle_core::CanonicalEvent;
@@ -57,6 +58,8 @@ impl Daemon {
             }
         }
         let store = Arc::new(Mutex::new(store));
+
+        maintenance::spawn_maintenance_tasks(store.clone());
 
         let watch_dirs: Vec<_> = self
             .watch_dirs
@@ -272,253 +275,243 @@ async fn handle_connection(
                 }
             },
             _ => {
-                let store = store.lock().await;
                 let resp = match req {
-                    DaemonRequest::GetStatus => {
-                        let count = store.count_events().unwrap_or(0);
-                        DaemonResponse::Status {
-                            uptime_secs: started.elapsed().as_secs(),
-                            events_count: count,
-                            version: env!("CARGO_PKG_VERSION").into(),
-                        }
-                    }
-                    DaemonRequest::GetTimeline {
-                        since,
-                        until,
-                        limit,
-                    } => match store.query_spans(since, until, limit) {
-                        Ok(spans) => DaemonResponse::Timeline { spans },
-                        Err(e) => DaemonResponse::Error {
-                            code: 500,
-                            message: format!("query failed: {e}"),
-                        },
-                    },
-                    DaemonRequest::GetEvents {
-                        since,
-                        until,
-                        limit,
-                    } => match store.query_activity_events(since, until, limit) {
-                        Ok(events) => DaemonResponse::TimelineEvents { events },
-                        Err(e) => DaemonResponse::Error {
-                            code: 500,
-                            message: format!("query failed: {e}"),
-                        },
-                    },
-                    DaemonRequest::Search { query, mode, limit } => {
-                        let query = match mode {
-                            chronicle_ipc::SearchMode::Semantic => {
-                                chronicle_ai::expand_search_query(&query)
-                            }
-                            chronicle_ipc::SearchMode::Keyword => query,
-                        };
-                        match store.search_events(&query, limit) {
-                            Ok(events) => DaemonResponse::TimelineEvents { events },
-                            Err(e) => DaemonResponse::Error {
-                                code: 500,
-                                message: format!("search failed: {e}"),
-                            },
-                        }
-                    }
-                    DaemonRequest::ListProjects { limit } => match store.query_projects(limit) {
-                        Ok(projects) => DaemonResponse::Projects { projects },
-                        Err(e) => DaemonResponse::Error {
-                            code: 500,
-                            message: format!("projects query failed: {e}"),
-                        },
-                    },
-                    DaemonRequest::GetProjectContext {
-                        project,
-                        since,
-                        limit,
-                    } => {
-                        let project_record = store.query_project_by_name(&project).ok().flatten();
-                        let spans = store
-                            .query_spans_for_project(&project, since, limit)
-                            .unwrap_or_default();
-                        let events = store
-                            .query_activity_events_for_project(&project, since, None, limit)
-                            .unwrap_or_default();
-                        DaemonResponse::ProjectContext {
-                            project: project_record,
-                            spans,
-                            events,
-                        }
-                    }
-                    DaemonRequest::GetSpan { id, event_limit } => {
-                        match store.query_span_by_id(&id) {
-                            Ok(Some(span)) => {
-                                let since = span.started_at;
-                                let until = span.ended_at.unwrap_or(i64::MAX);
-                                let events = if let Some(ref project) = span.project {
-                                    store
-                                        .query_activity_events_for_project(
-                                            project,
-                                            since,
-                                            Some(until),
-                                            event_limit,
-                                        )
-                                        .unwrap_or_default()
-                                } else {
-                                    store
-                                        .query_events(since, Some(until), event_limit)
-                                        .unwrap_or_default()
-                                };
-                                DaemonResponse::SpanDetail { span, events }
-                            }
-                            Ok(None) => DaemonResponse::Error {
-                                code: 404,
-                                message: format!("span not found: {id}"),
-                            },
-                            Err(e) => DaemonResponse::Error {
-                                code: 500,
-                                message: format!("span query failed: {e}"),
-                            },
-                        }
-                    }
-                    DaemonRequest::GetErrors { since, limit } => {
-                        match store.query_errors(since, limit) {
-                            Ok(events) => DaemonResponse::TimelineEvents { events },
-                            Err(e) => DaemonResponse::Error {
-                                code: 500,
-                                message: format!("errors query failed: {e}"),
-                            },
-                        }
-                    }
-                    DaemonRequest::GetSessions { since, until } => {
-                        match store.query_sessions(since, until) {
-                            Ok(sessions) => DaemonResponse::Sessions { sessions },
-                            Err(e) => DaemonResponse::Error {
-                                code: 500,
-                                message: format!("sessions query failed: {e}"),
-                            },
-                        }
-                    }
                     DaemonRequest::SummarizeDay { since, until } => {
                         let until =
                             until.unwrap_or_else(|| chrono::Local::now().timestamp_millis());
-                        let day_end_exclusive = chrono::DateTime::from_timestamp_millis(since)
-                            .and_then(|dt| {
-                                let local = dt.with_timezone(&chrono::Local);
-                                let next_day = local.date_naive().succ_opt()?;
-                                let midnight = next_day.and_hms_opt(0, 0, 0)?;
-                                midnight
-                                    .and_local_timezone(chrono::Local)
-                                    .single()
-                                    .map(|d| d.timestamp_millis())
-                            })
-                            .unwrap_or(since + 86_400_000);
-                        let ai_cfg = chronicle_config::load().ai;
-                        match store.query_spans(since, Some(until), 200) {
-                            Ok(spans) => match store.query_activity_events(since, Some(until), 250)
-                            {
-                                Ok(events) => {
-                                    let (summary, source) = chronicle_ai::summarize_day(
-                                        &ai_cfg, since, until, &spans, &events,
-                                    )
-                                    .await;
-                                    let session = chronicle_ai::build_daily_session(
-                                        since,
-                                        until,
-                                        &spans,
-                                        &events,
-                                        summary.clone(),
-                                    );
-                                    let source = match source {
-                                        chronicle_ai::SummarySource::Ai => "ai",
-                                        chronicle_ai::SummarySource::Rules => "rules",
-                                    }
-                                    .to_string();
-                                    if let Err(e) =
-                                        store.delete_sessions_between(since, day_end_exclusive)
-                                    {
-                                        DaemonResponse::Error {
-                                            code: 500,
-                                            message: format!("session replace failed: {e}"),
-                                        }
-                                    } else if let Err(e) = store.insert_session(&session) {
-                                        DaemonResponse::Error {
-                                            code: 500,
-                                            message: format!("session persist failed: {e}"),
-                                        }
-                                    } else {
-                                        DaemonResponse::DailySummary {
-                                            summary,
-                                            session,
-                                            source: Some(source),
-                                        }
-                                    }
+                        match maintenance::summarize_and_persist_day(
+                            Arc::clone(store),
+                            since,
+                            until,
+                        )
+                        .await
+                        {
+                            Ok((summary, source, session)) => DaemonResponse::DailySummary {
+                                summary,
+                                session,
+                                source: Some(source),
+                            },
+                            Err(message) => DaemonResponse::Error { code: 500, message },
+                        }
+                    }
+                    DaemonRequest::PruneNoiseEvents => {
+                        let guard = store.lock().await;
+                        match guard.prune_noise_events() {
+                            Ok(deleted) => DaemonResponse::MaintenanceResult {
+                                events_deleted: deleted,
+                            },
+                            Err(e) => DaemonResponse::Error {
+                                code: 500,
+                                message: format!("prune failed: {e}"),
+                            },
+                        }
+                    }
+                    other => {
+                        let guard = store.lock().await;
+                        match other {
+                            DaemonRequest::GetStatus => {
+                                let count = guard.count_events().unwrap_or(0);
+                                DaemonResponse::Status {
+                                    uptime_secs: started.elapsed().as_secs(),
+                                    events_count: count,
+                                    version: env!("CARGO_PKG_VERSION").into(),
                                 }
+                            }
+                            DaemonRequest::GetTimeline {
+                                since,
+                                until,
+                                limit,
+                            } => match guard.query_spans(since, until, limit) {
+                                Ok(spans) => DaemonResponse::Timeline { spans },
                                 Err(e) => DaemonResponse::Error {
                                     code: 500,
-                                    message: format!("events query failed: {e}"),
+                                    message: format!("query failed: {e}"),
                                 },
                             },
-                            Err(e) => DaemonResponse::Error {
-                                code: 500,
-                                message: format!("spans query failed: {e}"),
+                            DaemonRequest::GetEvents {
+                                since,
+                                until,
+                                limit,
+                            } => match guard.query_activity_events(since, until, limit) {
+                                Ok(events) => DaemonResponse::TimelineEvents { events },
+                                Err(e) => DaemonResponse::Error {
+                                    code: 500,
+                                    message: format!("query failed: {e}"),
+                                },
+                            },
+                            DaemonRequest::Search { query, mode, limit } => {
+                                let query = match mode {
+                                    chronicle_ipc::SearchMode::Semantic => {
+                                        chronicle_ai::expand_search_query(&query)
+                                    }
+                                    chronicle_ipc::SearchMode::Keyword => query,
+                                };
+                                match guard.search_events(&query, limit) {
+                                    Ok(events) => DaemonResponse::TimelineEvents { events },
+                                    Err(e) => DaemonResponse::Error {
+                                        code: 500,
+                                        message: format!("search failed: {e}"),
+                                    },
+                                }
+                            }
+                            DaemonRequest::ListProjects { limit } => {
+                                match guard.query_projects(limit) {
+                                    Ok(projects) => DaemonResponse::Projects { projects },
+                                    Err(e) => DaemonResponse::Error {
+                                        code: 500,
+                                        message: format!("projects query failed: {e}"),
+                                    },
+                                }
+                            }
+                            DaemonRequest::GetProjectContext {
+                                project,
+                                since,
+                                limit,
+                            } => {
+                                let project_record =
+                                    guard.query_project_by_name(&project).ok().flatten();
+                                let spans = guard
+                                    .query_spans_for_project(&project, since, limit)
+                                    .unwrap_or_default();
+                                let events = guard
+                                    .query_activity_events_for_project(&project, since, None, limit)
+                                    .unwrap_or_default();
+                                DaemonResponse::ProjectContext {
+                                    project: project_record,
+                                    spans,
+                                    events,
+                                }
+                            }
+                            DaemonRequest::GetSpan { id, event_limit } => {
+                                match guard.query_span_by_id(&id) {
+                                    Ok(Some(span)) => {
+                                        let since = span.started_at;
+                                        let until = span.ended_at.unwrap_or(i64::MAX);
+                                        let events = if let Some(ref project) = span.project {
+                                            guard
+                                                .query_activity_events_for_project(
+                                                    project,
+                                                    since,
+                                                    Some(until),
+                                                    event_limit,
+                                                )
+                                                .unwrap_or_default()
+                                        } else {
+                                            guard
+                                                .query_events(since, Some(until), event_limit)
+                                                .unwrap_or_default()
+                                        };
+                                        DaemonResponse::SpanDetail { span, events }
+                                    }
+                                    Ok(None) => DaemonResponse::Error {
+                                        code: 404,
+                                        message: format!("span not found: {id}"),
+                                    },
+                                    Err(e) => DaemonResponse::Error {
+                                        code: 500,
+                                        message: format!("span query failed: {e}"),
+                                    },
+                                }
+                            }
+                            DaemonRequest::GetErrors { since, limit } => {
+                                match guard.query_errors(since, limit) {
+                                    Ok(events) => DaemonResponse::TimelineEvents { events },
+                                    Err(e) => DaemonResponse::Error {
+                                        code: 500,
+                                        message: format!("errors query failed: {e}"),
+                                    },
+                                }
+                            }
+                            DaemonRequest::GetSessions { since, until } => {
+                                match guard.query_sessions(since, until) {
+                                    Ok(sessions) => DaemonResponse::Sessions { sessions },
+                                    Err(e) => DaemonResponse::Error {
+                                        code: 500,
+                                        message: format!("sessions query failed: {e}"),
+                                    },
+                                }
+                            }
+                            DaemonRequest::DeleteSession { id } => {
+                                let parsed = uuid::Uuid::parse_str(&id);
+                                match parsed {
+                                    Ok(session_id) => match guard.delete_session(&session_id) {
+                                        Ok(0) => DaemonResponse::Error {
+                                            code: 404,
+                                            message: format!("session not found: {id}"),
+                                        },
+                                        Ok(_) => DaemonResponse::Ack { event_id: id },
+                                        Err(e) => DaemonResponse::Error {
+                                            code: 500,
+                                            message: format!("delete session failed: {e}"),
+                                        },
+                                    },
+                                    Err(e) => DaemonResponse::Error {
+                                        code: 400,
+                                        message: format!("invalid session id: {e}"),
+                                    },
+                                }
+                            }
+                            DaemonRequest::ListPlugins => DaemonResponse::Plugins {
+                                plugins: chronicle_plugin::discover_plugins(),
+                            },
+                            DaemonRequest::GetConfig => {
+                                let cfg = chronicle_config::load();
+                                DaemonResponse::Config {
+                                    watch_dirs: cfg.watch_dirs,
+                                    collectors: cfg.collectors,
+                                    privacy: cfg.privacy,
+                                    ai: cfg.ai,
+                                }
+                            }
+                            DaemonRequest::SetConfig {
+                                watch_dirs,
+                                collectors,
+                                privacy,
+                                ai,
+                            } => {
+                                let mut cfg = chronicle_config::load();
+                                cfg.watch_dirs = watch_dirs;
+                                cfg.collectors = collectors;
+                                cfg.privacy = privacy;
+                                cfg.ai = ai;
+                                match chronicle_config::save(&cfg) {
+                                    Ok(()) => DaemonResponse::Ack {
+                                        event_id: "config_saved".into(),
+                                    },
+                                    Err(e) => DaemonResponse::Error {
+                                        code: 500,
+                                        message: format!("save config failed: {e}"),
+                                    },
+                                }
+                            }
+                            DaemonRequest::InstallShellHook { shell } => {
+                                match chronicle_hooks::install(shell.as_deref()) {
+                                    Ok(()) => DaemonResponse::Ack {
+                                        event_id: "hook_installed".into(),
+                                    },
+                                    Err(e) => DaemonResponse::Error {
+                                        code: 500,
+                                        message: format!("hook install failed: {e}"),
+                                    },
+                                }
+                            }
+                            DaemonRequest::EmitEvent { event } => {
+                                let event_id = event.id.to_string();
+                                match event_tx.send(event).await {
+                                    Ok(()) => DaemonResponse::Ack { event_id },
+                                    Err(_) => DaemonResponse::Error {
+                                        code: 503,
+                                        message: "event pipeline unavailable".into(),
+                                    },
+                                }
+                            }
+                            _ => DaemonResponse::Error {
+                                code: 400,
+                                message: "unimplemented".into(),
                             },
                         }
                     }
-                    DaemonRequest::ListPlugins => DaemonResponse::Plugins {
-                        plugins: chronicle_plugin::discover_plugins(),
-                    },
-                    DaemonRequest::GetConfig => {
-                        let cfg = chronicle_config::load();
-                        DaemonResponse::Config {
-                            watch_dirs: cfg.watch_dirs,
-                            collectors: cfg.collectors,
-                            privacy: cfg.privacy,
-                            ai: cfg.ai,
-                        }
-                    }
-                    DaemonRequest::SetConfig {
-                        watch_dirs,
-                        collectors,
-                        privacy,
-                        ai,
-                    } => {
-                        let mut cfg = chronicle_config::load();
-                        cfg.watch_dirs = watch_dirs;
-                        cfg.collectors = collectors;
-                        cfg.privacy = privacy;
-                        cfg.ai = ai;
-                        match chronicle_config::save(&cfg) {
-                            Ok(()) => DaemonResponse::Ack {
-                                event_id: "config_saved".into(),
-                            },
-                            Err(e) => DaemonResponse::Error {
-                                code: 500,
-                                message: format!("save config failed: {e}"),
-                            },
-                        }
-                    }
-                    DaemonRequest::InstallShellHook { shell } => {
-                        match chronicle_hooks::install(shell.as_deref()) {
-                            Ok(()) => DaemonResponse::Ack {
-                                event_id: "hook_installed".into(),
-                            },
-                            Err(e) => DaemonResponse::Error {
-                                code: 500,
-                                message: format!("hook install failed: {e}"),
-                            },
-                        }
-                    }
-                    DaemonRequest::EmitEvent { event } => {
-                        let event_id = event.id.to_string();
-                        match event_tx.send(event).await {
-                            Ok(()) => DaemonResponse::Ack { event_id },
-                            Err(_) => DaemonResponse::Error {
-                                code: 503,
-                                message: "event pipeline unavailable".into(),
-                            },
-                        }
-                    }
-                    _ => DaemonResponse::Error {
-                        code: 400,
-                        message: "unimplemented".into(),
-                    },
                 };
-                drop(store);
                 if let Err(e) = conn.send_response(resp).await {
                     warn!("send response: {e}");
                 }

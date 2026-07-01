@@ -45,10 +45,14 @@ pub enum DaemonRequest {
         since: i64,
         until: Option<i64>,
     },
+    DeleteSession {
+        id: String,
+    },
     SummarizeDay {
         since: i64,
         until: Option<i64>,
     },
+    PruneNoiseEvents,
     ListPlugins,
     GetConfig,
     SetConfig {
@@ -129,6 +133,9 @@ pub enum DaemonResponse {
     },
     Plugins {
         plugins: Vec<chronicle_plugin::PluginRecord>,
+    },
+    MaintenanceResult {
+        events_deleted: usize,
     },
     Error {
         code: u32,

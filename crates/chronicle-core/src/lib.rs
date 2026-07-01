@@ -137,6 +137,8 @@ pub struct Session {
     pub span_count: u32,
     pub event_count: u32,
     pub summary: Option<String>,
+    /// `ai` or `rules` — how the daily rollup was generated.
+    pub summary_source: Option<String>,
 }
 
 impl Session {
@@ -151,6 +153,7 @@ impl Session {
             span_count: 0,
             event_count: 0,
             summary: None,
+            summary_source: None,
         }
     }
 }

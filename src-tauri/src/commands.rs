@@ -204,6 +204,20 @@ async fn summarize_day_fallback(
 }
 
 #[tauri::command]
+pub async fn delete_session(state: State<'_, DaemonState>, id: String) -> Result<(), String> {
+    let socket_path = state.socket_path.clone();
+    let mut client = Client::connect(&socket_path).await?;
+    match client
+        .request(DaemonRequest::DeleteSession { id })
+        .await?
+    {
+        DaemonResponse::Ack { .. } => Ok(()),
+        DaemonResponse::Error { message, .. } => Err(message),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
 pub async fn summarize_today(state: State<'_, DaemonState>) -> Result<SummarizeResult, String> {
     let now = chrono::Local::now();
     let since = now
@@ -341,11 +355,18 @@ pub struct AiInfo {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct SummariesInfo {
+    pub auto_daily: bool,
+    pub auto_daily_hour_local: u8,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct ConfigInfo {
     pub watch_dirs: Vec<String>,
     pub collectors: CollectorsInfo,
     pub privacy: PrivacyInfo,
     pub ai: AiInfo,
+    pub summaries: SummariesInfo,
 }
 
 impl From<chronicle_config::CollectorsConfig> for CollectorsInfo {
@@ -416,6 +437,24 @@ impl From<AiInfo> for chronicle_config::AiConfig {
     }
 }
 
+impl From<chronicle_config::SummariesConfig> for SummariesInfo {
+    fn from(s: chronicle_config::SummariesConfig) -> Self {
+        Self {
+            auto_daily: s.auto_daily,
+            auto_daily_hour_local: s.auto_daily_hour_local,
+        }
+    }
+}
+
+impl From<SummariesInfo> for chronicle_config::SummariesConfig {
+    fn from(s: SummariesInfo) -> Self {
+        Self {
+            auto_daily: s.auto_daily,
+            auto_daily_hour_local: s.auto_daily_hour_local,
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn get_config(_state: State<'_, DaemonState>) -> Result<ConfigInfo, String> {
     tokio::task::spawn_blocking(|| {
@@ -425,6 +464,7 @@ pub async fn get_config(_state: State<'_, DaemonState>) -> Result<ConfigInfo, St
             collectors: cfg.collectors.into(),
             privacy: cfg.privacy.into(),
             ai: cfg.ai.into(),
+            summaries: cfg.summaries.into(),
         }
     })
     .await
@@ -438,14 +478,15 @@ pub async fn set_config(
     collectors: CollectorsInfo,
     privacy: PrivacyInfo,
     ai: AiInfo,
+    summaries: SummariesInfo,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let cfg = chronicle_config::ChronicleConfig {
-            watch_dirs,
-            collectors: collectors.into(),
-            privacy: privacy.into(),
-            ai: ai.into(),
-        };
+        let mut cfg = chronicle_config::load();
+        cfg.watch_dirs = watch_dirs;
+        cfg.collectors = collectors.into();
+        cfg.privacy = privacy.into();
+        cfg.ai = ai.into();
+        cfg.summaries = summaries.into();
         chronicle_config::save(&cfg).map_err(|e| e.to_string())
     })
     .await
@@ -462,6 +503,22 @@ pub async fn install_shell_hook(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize)]
+pub struct PruneNoiseResult {
+    pub events_deleted: usize,
+}
+
+#[tauri::command]
+pub async fn prune_noise_events(state: State<'_, DaemonState>) -> Result<PruneNoiseResult, String> {
+    let socket_path = state.socket_path.clone();
+    let mut client = Client::connect(&socket_path).await?;
+    match client.request(DaemonRequest::PruneNoiseEvents).await? {
+        DaemonResponse::MaintenanceResult { events_deleted } => Ok(PruneNoiseResult { events_deleted }),
+        DaemonResponse::Error { message, .. } => Err(message),
+        _ => Err("unexpected response".into()),
+    }
 }
 
 #[tauri::command]

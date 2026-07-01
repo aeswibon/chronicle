@@ -153,10 +153,16 @@ fn build_report_line(
                 .map(|t| format!(" — {t}"))
                 .unwrap_or_default();
             let agent = is_agent_app_name(app);
-            if agent {
+            if event.r#type == "window.focus" {
+                if title.is_empty() {
+                    format!("Window changed in {app}{project}")
+                } else {
+                    format!("Window in {app}{title}{project}")
+                }
+            } else if agent {
                 format!("Agent session in {app}{title}{project}")
             } else {
-                format!("Focused {app}{title}{project}")
+                format!("Switched to {app}{title}{project}")
             }
         }
         EventCategory::Ide => {

@@ -333,6 +333,7 @@ dependencies = [
 name = "chronicle-store"
 version = "0.1.0"
 dependencies = [
+ "chronicle-ai",
  "chronicle-core",
  "chrono",
  "rusqlite",

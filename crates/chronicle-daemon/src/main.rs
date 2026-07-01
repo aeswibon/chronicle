@@ -3,6 +3,7 @@ mod collectors;
 mod daemon;
 mod event_filter;
 mod http_ingress;
+mod maintenance;
 mod project;
 mod project_bootstrap;
 mod rule_engine;

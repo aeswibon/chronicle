@@ -93,6 +93,29 @@ impl Default for AiConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SummariesConfig {
+    /// Generate today's rollup automatically when the daemon is running.
+    #[serde(default = "default_true")]
+    pub auto_daily: bool,
+    /// Local hour (0–23) after which auto-summarize runs if today has no rollup yet.
+    #[serde(default = "default_auto_daily_hour")]
+    pub auto_daily_hour_local: u8,
+}
+
+fn default_auto_daily_hour() -> u8 {
+    21
+}
+
+impl Default for SummariesConfig {
+    fn default() -> Self {
+        Self {
+            auto_daily: true,
+            auto_daily_hour_local: default_auto_daily_hour(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct ChronicleConfig {
     #[serde(default)]
@@ -103,6 +126,8 @@ pub struct ChronicleConfig {
     pub privacy: PrivacyConfig,
     #[serde(default)]
     pub ai: AiConfig,
+    #[serde(default)]
+    pub summaries: SummariesConfig,
 }
 
 pub fn config_path() -> PathBuf {

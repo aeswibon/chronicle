@@ -1,5 +1,5 @@
 export function formatTime(ts) {
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 export function formatDate(ts) {
@@ -16,6 +16,7 @@ export function formatDateTime(ts) {
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
   });
 }
 
@@ -76,6 +77,20 @@ export function isSpanActive(span, now = Date.now()) {
   if (span.ended_at != null && span.ended_at !== undefined) return false;
   const started = /** @type {number} */ (span.started_at ?? 0);
   return now - started < 15 * 60 * 1000;
+}
+
+/** Show only in-progress focus blocks (not ended, stale, or idle). */
+export function isListableSpan(span, now = Date.now()) {
+  if (span.span_type === 'idle') return false;
+  return isSpanActive(span, now);
+}
+
+/** Daily rollup rows worth showing (skip empty or no-activity stubs). */
+export function isListableSummary(session) {
+  const text = (session.summary ?? '').trim();
+  if (!text) return false;
+  if (/no meaningful activity/i.test(text)) return false;
+  return true;
 }
 
 /** Nav highlight — Timeline is default; Sessions includes detail routes. */
@@ -143,9 +158,10 @@ export function eventSubtitle(event) {
   const type = /** @type {string} */ (event.type ?? '');
   const parts = [];
 
-  if (category === 'os' && type === 'process.focus') {
+  if (category === 'os' && (type === 'process.focus' || type === 'window.focus')) {
     if (meta.window_title) parts.push(truncate(meta.window_title, 80));
-    else parts.push('focused');
+    else if (type === 'window.focus') parts.push('window changed');
+    else parts.push(meta.app_name || 'app switch');
   } else if (category === 'filesystem' && meta.path) {
     parts.push(truncate(meta.path, 80));
   } else if (category === 'shell' && meta.cwd) {

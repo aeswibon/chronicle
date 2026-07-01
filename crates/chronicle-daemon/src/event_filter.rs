@@ -97,7 +97,7 @@ fn redact_command_secrets(cmd: &str) -> String {
 }
 
 fn should_record_focus(event: &CanonicalEvent) -> bool {
-    if event.r#type != "process.focus" {
+    if event.r#type != "process.focus" && event.r#type != "window.focus" {
         return true;
     }
 

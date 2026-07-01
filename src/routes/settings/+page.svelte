@@ -25,9 +25,15 @@
     api_key_env: '',
     timeout_secs: 60,
   });
+  let summaries = $state({
+    auto_daily: true,
+    auto_daily_hour_local: 21,
+  });
   let shellChoice = $state('zsh');
   let configMessage = $state('');
   let hookMessage = $state('');
+  let pruneMessage = $state('');
+  let pruning = $state(false);
   let saving = $state(false);
   let installingHook = $state(false);
   let restarting = $state(false);
@@ -60,6 +66,12 @@
           timeout_secs: cfg.ai.timeout_secs ?? 60,
         };
       }
+      if (cfg.summaries) {
+        summaries = {
+          auto_daily: cfg.summaries.auto_daily ?? true,
+          auto_daily_hour_local: cfg.summaries.auto_daily_hour_local ?? 21,
+        };
+      }
     } catch {}
   });
 
@@ -90,6 +102,7 @@
           api_key_env: ai.api_key_env.trim() || null,
           timeout_secs: ai.timeout_secs,
         },
+        summaries: { ...summaries },
       });
       configMessage = 'Saved. Restart the daemon for watch dirs and collector toggles to take effect.';
     } catch (e) {
@@ -118,6 +131,20 @@
     }
   }
 
+  async function pruneNoise() {
+    pruning = true;
+    pruneMessage = '';
+    try {
+      const result = await invoke('prune_noise_events');
+      pruneMessage = `Removed ${result.events_deleted} low-signal events. Restart the daemon if counts look stale.`;
+      status = await invoke('get_status');
+    } catch (e) {
+      pruneMessage = String(e);
+    } finally {
+      pruning = false;
+    }
+  }
+
   async function restartDaemon() {
     restarting = true;
     restartMessage = '';
@@ -139,7 +166,7 @@
   ]);
 
   const collectorRows = [
-    { key: 'window_focus', label: 'Window focus', hint: 'Active app name (no Accessibility permission on macOS)' },
+    { key: 'window_focus', label: 'Window focus', hint: 'App switches and window/tab changes via window titles (no Accessibility prompt)' },
     { key: 'filesystem', label: 'Filesystem', hint: 'Source file create/delete under watch dirs' },
     { key: 'git', label: 'Git', hint: 'Commits, checkouts, merges via reflog' },
     { key: 'shell', label: 'Shell hook', hint: 'Terminal commands via UDP (requires hook install)' },
@@ -212,10 +239,58 @@
   </section>
 
   <section class="mb-8">
+    <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Daily rollups</h3>
+    <p class="text-sm text-[var(--text-secondary)] leading-relaxed mb-4">
+      The daemon can auto-generate today's summary after the hour you choose (local time). Manual "Summarize today" on Sessions still works anytime.
+    </p>
+    <div class="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl divide-y divide-[var(--border-subtle)] mb-4">
+      <label class="flex items-start gap-4 px-5 py-4 cursor-pointer">
+        <input type="checkbox" class="mt-1 accent-[var(--accent)]" bind:checked={summaries.auto_daily} />
+        <span>
+          <span class="text-sm text-[var(--text)] block">Auto-summarize each day</span>
+          <span class="text-xs text-[var(--text-muted)]">Requires the daemon to be running near the scheduled hour</span>
+        </span>
+      </label>
+    </div>
+    <label class="block text-sm text-[var(--text-secondary)] mb-4">
+      Auto-summarize after (local hour, 0–23)
+      <input
+        type="number"
+        min="0"
+        max="23"
+        bind:value={summaries.auto_daily_hour_local}
+        class="mt-1 w-24 text-sm bg-[var(--bg-muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--text)]"
+      />
+    </label>
+  </section>
+
+  <section class="mb-8">
+    <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Timeline cleanup</h3>
+    <p class="text-sm text-[var(--text-secondary)] leading-relaxed mb-3">
+      Remove low-signal git noise (fetch/pull/checkout) and terminal junk already stored. Safe to run after upgrading from an older build that backfilled thousands of events.
+    </p>
+    <button
+      type="button"
+      onclick={pruneNoise}
+      disabled={pruning}
+      class="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)]/40 transition-colors disabled:opacity-50"
+    >
+      {pruning ? 'Pruning…' : 'Remove low-signal events'}
+    </button>
+    {#if pruneMessage}
+      <p class="text-xs text-[var(--text-muted)] mt-2">{pruneMessage}</p>
+    {/if}
+  </section>
+
+  <section class="mb-8">
     <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">AI summaries</h3>
     <p class="text-sm text-[var(--text-secondary)] leading-relaxed mb-4">
-      Daily session rollups use an OpenAI-compatible chat API when enabled (Ollama at
-      <code class="font-mono text-xs">127.0.0.1:11434</code> by default). Falls back to rule-based text if disabled or unreachable.
+      {#if ai.enabled}
+        Daily rollups use your OpenAI-compatible endpoint (Ollama at
+        <code class="font-mono text-xs">127.0.0.1:11434</code> by default). Falls back to rules if the model is unreachable.
+      {:else}
+        <strong class="font-medium text-[var(--text)]">Rules mode is active.</strong> Summaries are deterministic text from filtered activity — enable AI below for richer daily reports.
+      {/if}
     </p>
     <div class="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl divide-y divide-[var(--border-subtle)] mb-4">
       <label class="flex items-start gap-4 px-5 py-4 cursor-pointer">

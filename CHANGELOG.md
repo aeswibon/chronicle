@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-01
+
+### Added
+
+- **Persisted summary source** — daily rollups store `ai` vs `rules` on session rows; Sessions UI shows badges after reload
+- **Auto daily rollups** — configurable local hour in Settings; daemon generates today's summary when missing
+- **Enrichment backfill** — daemon fills `report_line` and activity labels on existing events at startup
+- **Timeline cleanup** — Settings action to prune low-signal git and shell noise from existing databases
+- **Delete summaries** — remove individual daily rollups from Sessions
+- **Window/tab tracking** — `window.focus` events when the front window title changes within the same app (Safari tabs, Finder windows, etc.)
+
+
+### Changed
+
+- **Git first-run** — bootstrap cursors only (no historical backfill flood on fresh install)
+- **UI** — 24-hour clock; hide inactive timeline sessions and empty daily rollups; stop tagging every app switch with a generic "focus" label
+- **Summaries** — rule-based rollups rank top projects by focus time, drop generic git themes, cap displayed hours, and surface build/test failures only (not git push noise)
+- **Homebrew** — cask checksums auto-updated on release
+
+### Fixed
+
+- Project path layout overflow; Timeline nav default highlight; session active indicators after restart
+- CI rustfmt and clippy failures
+
 ## [0.1.0] - 2026-07-01
 
 First public release — local developer observability for macOS.

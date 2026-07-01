@@ -102,9 +102,47 @@ fn single_event_label(event: &CanonicalEvent) -> Option<&'static str> {
 }
 
 fn os_label(event: &CanonicalEvent) -> Option<&'static str> {
-    if event.r#type != "process.focus" {
-        return None;
+    match event.r#type.as_str() {
+        "process.focus" => process_focus_label(event),
+        "window.focus" => window_focus_label(event),
+        _ => None,
     }
+}
+
+fn process_focus_label(event: &CanonicalEvent) -> Option<&'static str> {
+    app_context_label(event)
+}
+
+fn window_focus_label(event: &CanonicalEvent) -> Option<&'static str> {
+    if is_browser_app(event) {
+        Some("browsing")
+    } else if is_finder_app(event) {
+        Some("files")
+    } else {
+        None
+    }
+}
+
+fn app_context_label(event: &CanonicalEvent) -> Option<&'static str> {
+    if is_agent_app(event) {
+        return Some("agent session");
+    }
+    if is_terminal_app(event) {
+        return Some("terminal");
+    }
+    if is_ide_app(event) {
+        return Some("coding");
+    }
+    if is_browser_app(event) {
+        return Some("browsing");
+    }
+    if is_finder_app(event) {
+        return Some("files");
+    }
+    None
+}
+
+fn is_agent_app(event: &CanonicalEvent) -> bool {
     let app = event
         .metadata
         .get("app_name")
@@ -117,27 +155,88 @@ fn os_label(event: &CanonicalEvent) -> Option<&'static str> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_lowercase();
-    if app.contains("cursor")
-        || app.contains("claude")
-        || app.contains("codex")
-        || app.contains("gemini")
-        || app.contains("windsurf")
-        || bundle.contains("cursor")
-        || bundle.contains("anthropic")
-    {
-        Some("agent session")
-    } else if app.contains("terminal")
-        || app.contains("iterm")
-        || app.contains("warp")
-        || app.contains("ghostty")
-        || app.contains("alacritty")
-    {
-        Some("terminal")
-    } else if app.contains("code") || app.contains("xcode") || app.contains("intellij") {
-        Some("coding")
-    } else {
-        Some("focus")
-    }
+    [
+        "cursor",
+        "claude",
+        "codex",
+        "gemini",
+        "windsurf",
+        "copilot",
+        "aider",
+        "opencode",
+        "antigravity",
+    ]
+    .iter()
+    .any(|n| app.contains(n) || bundle.contains(n))
+}
+
+fn is_terminal_app(event: &CanonicalEvent) -> bool {
+    let app = event
+        .metadata
+        .get("app_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&event.source)
+        .to_lowercase();
+    [
+        "terminal",
+        "iterm",
+        "warp",
+        "ghostty",
+        "alacritty",
+        "kitty",
+        "wezterm",
+    ]
+    .iter()
+    .any(|n| app.contains(n))
+}
+
+fn is_ide_app(event: &CanonicalEvent) -> bool {
+    let app = event
+        .metadata
+        .get("app_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&event.source)
+        .to_lowercase();
+    app.contains("xcode")
+        || app.contains("intellij")
+        || app.contains("android studio")
+        || (app.contains("code") && !app.contains("cursor"))
+}
+
+fn is_browser_app(event: &CanonicalEvent) -> bool {
+    let app = event
+        .metadata
+        .get("app_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&event.source)
+        .to_lowercase();
+    let bundle = event
+        .metadata
+        .get("bundle_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    [
+        "safari", "chrome", "firefox", "brave", "arc", "edge", "opera", "vivaldi", "chromium",
+    ]
+    .iter()
+    .any(|n| app.contains(n) || bundle.contains(n))
+}
+
+fn is_finder_app(event: &CanonicalEvent) -> bool {
+    let app = event
+        .metadata
+        .get("app_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&event.source)
+        .to_lowercase();
+    let bundle = event
+        .metadata
+        .get("bundle_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    app.contains("finder") || bundle.contains("com.apple.finder")
 }
 
 fn shell_label(event: &CanonicalEvent) -> Option<&'static str> {
@@ -276,6 +375,25 @@ mod tests {
         assert_eq!(
             e.metadata.get("activity_label").and_then(|v| v.as_str()),
             Some("push")
+        );
+    }
+
+    #[test]
+    fn labels_no_generic_focus_for_notes() {
+        let mut e = CanonicalEvent::new("Notes", EventCategory::Os, "process.focus");
+        e.metadata = json!({"app_name": "Notes", "bundle_id": "com.apple.Notes"});
+        annotate_event(&mut e);
+        assert!(e.metadata.get("activity_label").is_none());
+    }
+
+    #[test]
+    fn labels_finder_window_switch() {
+        let mut e = CanonicalEvent::new("Finder", EventCategory::Os, "window.focus");
+        e.metadata = json!({"app_name": "Finder", "bundle_id": "com.apple.finder", "window_title": "Downloads"});
+        annotate_event(&mut e);
+        assert_eq!(
+            e.metadata.get("activity_label").and_then(|v| v.as_str()),
+            Some("files")
         );
     }
 

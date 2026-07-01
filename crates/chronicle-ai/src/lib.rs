@@ -84,7 +84,7 @@ pub async fn summarize_day(
         }
     }
     (
-        rule_summary::daily_summary(since, spans, &prepared),
+        rule_summary::daily_summary(since, until, spans, &prepared),
         SummarySource::Rules,
     )
 }
@@ -96,6 +96,7 @@ pub fn build_daily_session(
     spans: &[Span],
     events: &[CanonicalEvent],
     summary: String,
+    summary_source: &str,
 ) -> Session {
     let focus_ms: u64 = spans.iter().map(|s| s.duration_ms.unwrap_or(0)).sum();
     let project = spans
@@ -123,6 +124,7 @@ pub fn build_daily_session(
         span_count: spans.len() as u32,
         event_count: events.len() as u32,
         summary: Some(summary),
+        summary_source: Some(summary_source.to_string()),
     }
 }
 
