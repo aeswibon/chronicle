@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 chronicle-core = { path = "../chronicle-core" }
 chronicle-config = { path = "../chronicle-config" }
+chronicle-plugin = { path = "../chronicle-plugin" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

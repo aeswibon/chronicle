@@ -304,6 +304,22 @@ impl ChronicleMcp {
             Err(e) => error_result(e),
         }
     }
+
+    #[tool(description = "Installed plugin manifests from ~/.chronicle/plugins")]
+    async fn list_plugins(&self) -> Result<CallToolResult, McpError> {
+        match connect(&self.socket).await {
+            Ok(mut client) => match client.request(DaemonRequest::ListPlugins).await {
+                Ok(DaemonResponse::Plugins { plugins }) => text_result(
+                    serde_json::to_string_pretty(&plugins)
+                        .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}")),
+                ),
+                Ok(DaemonResponse::Error { message, .. }) => error_result(message),
+                Ok(_) => error_result("unexpected response"),
+                Err(e) => error_result(e),
+            },
+            Err(e) => error_result(e),
+        }
+    }
 }
 
 #[tool_handler]

@@ -247,6 +247,7 @@ dependencies = [
  "chronicle-core",
  "chronicle-hooks",
  "chronicle-ipc",
+ "chronicle-plugin",
  "chronicle-store",
  "chrono",
  "clap",
@@ -279,6 +280,7 @@ version = "0.1.0"
 dependencies = [
  "chronicle-config",
  "chronicle-core",
+ "chronicle-plugin",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -309,9 +311,11 @@ name = "chronicle-plugin"
 version = "0.1.0"
 dependencies = [
  "chronicle-core",
+ "dirs",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "toml",
 ]
 
 [[package]]

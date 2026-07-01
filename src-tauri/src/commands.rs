@@ -124,6 +124,42 @@ pub async fn get_errors(
     }
 }
 
+#[tauri::command]
+pub async fn get_sessions(
+    state: State<'_, DaemonState>,
+    since: i64,
+    until: Option<i64>,
+) -> Result<Vec<chronicle_core::Session>, String> {
+    let socket_path = state.socket_path.clone();
+    let mut client = Client::connect(&socket_path).await?;
+    match client
+        .request(DaemonRequest::GetSessions { since, until })
+        .await?
+    {
+        DaemonResponse::Sessions { sessions } => Ok(sessions),
+        DaemonResponse::Error { message, .. } => Err(message),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn summarize_day(
+    state: State<'_, DaemonState>,
+    since: i64,
+    until: Option<i64>,
+) -> Result<String, String> {
+    let socket_path = state.socket_path.clone();
+    let mut client = Client::connect(&socket_path).await?;
+    match client
+        .request(DaemonRequest::SummarizeDay { since, until })
+        .await?
+    {
+        DaemonResponse::DailySummary { summary, .. } => Ok(summary),
+        DaemonResponse::Error { message, .. } => Err(message),
+        _ => Err("unexpected response".into()),
+    }
+}
+
 #[derive(Serialize)]
 pub struct ProjectContextInfo {
     pub project: Option<ProjectRecord>,

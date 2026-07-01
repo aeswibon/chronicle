@@ -1,3 +1,7 @@
+pub mod loader;
+
+pub use loader::{discover_plugins, PluginManifest, PluginRecord};
+
 use chronicle_core::CanonicalEvent;
 use std::collections::HashMap;
 

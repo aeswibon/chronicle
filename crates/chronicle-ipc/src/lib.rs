@@ -49,6 +49,7 @@ pub enum DaemonRequest {
         since: i64,
         until: Option<i64>,
     },
+    ListPlugins,
     GetConfig,
     SetConfig {
         watch_dirs: Vec<String>,
@@ -120,6 +121,9 @@ pub enum DaemonResponse {
     DailySummary {
         summary: String,
         session: chronicle_core::Session,
+    },
+    Plugins {
+        plugins: Vec<chronicle_plugin::PluginRecord>,
     },
     Error {
         code: u32,

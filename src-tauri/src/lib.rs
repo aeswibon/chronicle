@@ -28,6 +28,8 @@ pub fn run() {
             commands::get_events,
             commands::search_events,
             commands::get_errors,
+            commands::get_sessions,
+            commands::summarize_day,
             commands::get_project_context,
             commands::get_span_detail,
             commands::get_config,

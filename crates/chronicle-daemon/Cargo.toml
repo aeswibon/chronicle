@@ -7,6 +7,7 @@ edition = "2021"
 chronicle-core = { path = "../chronicle-core" }
 chronicle-config = { path = "../chronicle-config" }
 chronicle-hooks = { path = "../chronicle-hooks" }
+chronicle-plugin = { path = "../chronicle-plugin" }
 chronicle-ipc = { path = "../chronicle-ipc" }
 chronicle-store = { path = "../chronicle-store" }
 chronicle-ai = { path = "../chronicle-ai" }

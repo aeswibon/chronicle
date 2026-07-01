@@ -427,6 +427,11 @@ async fn handle_connection(
                             },
                         }
                     }
+                    DaemonRequest::ListPlugins => {
+                        DaemonResponse::Plugins {
+                            plugins: chronicle_plugin::discover_plugins(),
+                        }
+                    }
                     DaemonRequest::GetConfig => {
                         let cfg = chronicle_config::load();
                         DaemonResponse::Config {
