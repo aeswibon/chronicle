@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Chronicle",
+  "version": "0.1.0",
+  "description": "Emit page focus events to chronicle-daemon (localhost only)",
+  "permissions": ["tabs", "storage"],
+  "host_permissions": ["http://127.0.0.1:9713/*"],
+  "background": { "service_worker": "background.js" },
+  "options_page": "options.html"
+}

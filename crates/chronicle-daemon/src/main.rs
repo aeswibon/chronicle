@@ -2,6 +2,7 @@ mod cli;
 mod collectors;
 mod daemon;
 mod event_filter;
+mod http_ingress;
 mod project;
 mod project_bootstrap;
 mod rule_engine;

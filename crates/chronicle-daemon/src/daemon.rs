@@ -60,6 +60,11 @@ impl Daemon {
         let (event_tx, event_rx) = mpsc::channel::<CanonicalEvent>(1024);
         let (broadcast_tx, _) = broadcast::channel::<CanonicalEvent>(256);
 
+        let http_tx = event_tx.clone();
+        tokio::spawn(async move {
+            crate::http_ingress::run(9713, http_tx).await;
+        });
+
         let store_persist = store.clone();
         let counter = event_counter.clone();
         let broadcast_tx_clone = broadcast_tx.clone();

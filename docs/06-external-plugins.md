@@ -14,6 +14,8 @@ Extension  →  UDS emit_event  →  daemon mpsc  →  filter → rule engine �
 
 Shell hooks are the exception: they use **UDP** `127.0.0.1:9712` because hooks cannot hold a persistent socket.
 
+Browser extensions use **HTTP** `POST http://127.0.0.1:9713/v1/events` with a `CanonicalEvent` JSON body (see `extensions/browser-chronicle/`).
+
 ---
 
 ## `emit_event` IPC

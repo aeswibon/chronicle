@@ -138,6 +138,8 @@ fn parse_reflog_change(path: &Path) -> Option<CanonicalEvent> {
         "merge.completed"
     } else if message.starts_with("rebase") {
         "rebase.completed"
+    } else if message.starts_with("push") || message.contains(": push to ") {
+        "push.completed"
     } else if message.contains("checkout") {
         "branch.checkout"
     } else {

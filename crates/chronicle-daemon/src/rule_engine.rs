@@ -90,6 +90,9 @@ fn single_event_label(event: &CanonicalEvent) -> Option<&'static str> {
     match event.category {
         EventCategory::Shell => shell_label(event),
         EventCategory::Git => git_label(event),
+        EventCategory::Ide => ide_label(event),
+        EventCategory::Browser => browser_label(event),
+        EventCategory::Build => Some("build"),
         _ => None,
     }
 }
@@ -115,7 +118,26 @@ fn git_label(event: &CanonicalEvent) -> Option<&'static str> {
         "merge.completed" => Some("merge"),
         "branch.checkout" => Some("branch switch"),
         "rebase.completed" => Some("rebase"),
+        "push.completed" => Some("push"),
         _ => None,
+    }
+}
+
+fn ide_label(event: &CanonicalEvent) -> Option<&'static str> {
+    match event.r#type.as_str() {
+        t if t.starts_with("ide.test") => Some("test iteration"),
+        t if t.starts_with("ide.debug") => Some("debugging"),
+        t if t.contains("save") => Some("editing"),
+        t if t.contains("focus") => Some("coding"),
+        _ => Some("ide activity"),
+    }
+}
+
+fn browser_label(event: &CanonicalEvent) -> Option<&'static str> {
+    match event.r#type.as_str() {
+        "page.focus" => Some("research"),
+        "page.navigate" => Some("browsing"),
+        _ => Some("browser activity"),
     }
 }
 
@@ -206,12 +228,22 @@ mod tests {
     }
 
     #[test]
-    fn labels_git_commit() {
-        let mut e = CanonicalEvent::new("git", EventCategory::Git, "commit.created");
+    fn labels_git_push() {
+        let mut e = CanonicalEvent::new("git", EventCategory::Git, "push.completed");
         annotate_event(&mut e);
         assert_eq!(
             e.metadata.get("activity_label").and_then(|v| v.as_str()),
-            Some("commit")
+            Some("push")
+        );
+    }
+
+    #[test]
+    fn labels_ide_test() {
+        let mut e = CanonicalEvent::new("vscode", EventCategory::Ide, "ide.test.run");
+        annotate_event(&mut e);
+        assert_eq!(
+            e.metadata.get("activity_label").and_then(|v| v.as_str()),
+            Some("test iteration")
         );
     }
 }
