@@ -107,12 +107,15 @@ Configure watch directories in **Settings** or `~/.chronicle/config.toml`.
 
 ### Homebrew
 
+Homebrew looks for `homebrew-chronicle` by default — tap this app repo explicitly:
+
 ```bash
-brew tap aeswibon/chronicle
+brew tap aeswibon/chronicle https://github.com/aeswibon/chronicle
+brew trust aeswibon/chronicle
 brew install --cask chronicle
 ```
 
-The cask lives in this repo under `Casks/` (not `Formula/` — Homebrew expects casks in a tap's `Casks` directory).
+The cask lives in `Casks/chronicle.rb` (not `Formula/`).
 
 ---
 
