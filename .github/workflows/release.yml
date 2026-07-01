@@ -22,20 +22,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Require macOS signing
-        run: |
-          if [ "${{ vars.MACOS_SIGNING_ENABLED }}" != "true" ]; then
-            echo "::error::Set repository variable MACOS_SIGNING_ENABLED=true and configure Apple signing secrets. See docs/07-release-macos.md"
-            exit 1
-          fi
-
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           target: ${{ matrix.target }}
       - uses: oven-sh/setup-bun@v2
 
       - name: Import code signing certificate
+        if: vars.MACOS_SIGNING_ENABLED == 'true'
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
@@ -43,6 +36,7 @@ jobs:
           keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
 
       - name: Verify signing identity
+        if: vars.MACOS_SIGNING_ENABLED == 'true'
         run: security find-identity -v -p codesigning
 
       - name: Install frontend deps
@@ -51,9 +45,13 @@ jobs:
       - name: Build frontend
         run: bun run build
 
-      # Certificate is already in the CI keychain — do NOT pass APPLE_CERTIFICATE here
-      # (Tauri would try to import again and fail). Notarization uses APPLE_ID/* below.
+      - name: Build unsigned Tauri app
+        if: vars.MACOS_SIGNING_ENABLED != 'true'
+        run: bun run tauri build --target ${{ matrix.target }}
+
+      # Certificate is already in the CI keychain — do NOT pass APPLE_CERTIFICATE here.
       - name: Build, sign, and notarize Tauri app
+        if: vars.MACOS_SIGNING_ENABLED == 'true'
         run: bun run tauri build --target ${{ matrix.target }}
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -95,6 +93,8 @@ jobs:
           merge-multiple: true
 
       - name: Generate release notes from CHANGELOG
+        env:
+          SIGNED: ${{ vars.MACOS_SIGNING_ENABLED }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           TAG="${GITHUB_REF_NAME}"
@@ -113,9 +113,27 @@ jobs:
 
             echo ""
             echo "### Install"
-            echo "1. Download the DMG for your Mac (Apple Silicon → arm64, Intel → x64)"
-            echo "2. Open **Chronicle.app** — signed and notarized; background service starts automatically"
-            echo "3. Optional: Settings → Install shell hook for terminal capture"
+            echo "1. Download the DMG for your Mac (Apple Silicon → **arm64**, Intel → **x64**)"
+            echo "2. Open the DMG and drag **Chronicle** to Applications"
+
+            if [ "$SIGNED" = "true" ]; then
+              echo "3. Open **Chronicle.app** — signed and notarized; background service starts automatically"
+              echo "4. Optional: Settings → Install shell hook for terminal capture"
+            else
+              echo ""
+              echo "> **Unsigned build** — no Apple Developer ID. macOS Gatekeeper may block the first launch. This is expected; the app is not damaged."
+              echo ""
+              echo "3. **First launch only:** Right-click **Chronicle.app** in Applications → **Open** → confirm **Open**"
+              echo "   Or run in Terminal:"
+              echo '   ```bash'
+              echo "   xattr -dr com.apple.quarantine /Applications/Chronicle.app"
+              echo '   ```'
+              echo "4. Chronicle starts the background service automatically"
+              echo "5. Optional: Settings → Install shell hook for terminal capture"
+              echo ""
+              echo "To avoid Gatekeeper prompts entirely, [build from source](https://github.com/${{ github.repository }}#readme) or enable paid signing — see [docs/07-release-macos.md](https://github.com/${{ github.repository }}/blob/master/docs/07-release-macos.md)."
+            fi
+
             echo ""
             echo "### Downloads"
             for f in chronicle-*.dmg; do

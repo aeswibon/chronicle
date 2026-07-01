@@ -78,6 +78,16 @@ bun run tauri dev
 
 Configure watch paths in the app under **Settings**, or edit `~/.chronicle/config.toml`.
 
+### GitHub Releases (unsigned)
+
+Pre-built DMGs are published on [Releases](https://github.com/aeswibon/chronicle/releases). They are **not** Apple-notarized (no $99/year developer account). On first launch, macOS may block the app — **right-click Chronicle.app → Open**, or run:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Chronicle.app
+```
+
+See [docs/07-release-macos.md](docs/07-release-macos.md) for details and signed-release setup.
+
 ---
 
 ## Collectors
