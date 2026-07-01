@@ -115,6 +115,8 @@ brew trust aeswibon/chronicle
 brew install --cask chronicle
 ```
 
+The cask quits and replaces an existing `Chronicle.app` (including a prior DMG install) so you do not need `--force`.
+
 **Upgrade** (Homebrew does not include casks in plain `brew upgrade`):
 
 ```bash
