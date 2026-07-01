@@ -84,6 +84,8 @@ fn get_frontmost_app_sync() -> Result<AppInfo, String> {
 
 #[cfg(target_os = "macos")]
 fn get_frontmost_app_macos() -> Result<AppInfo, String> {
+    use lsappinfo_parse::{parse_front_asn, parse_lsappinfo_field};
+
     // lsappinfo uses LaunchServices — no Accessibility / Automation permission prompt.
     // (AppleScript + System Events triggers "control this computer" for the daemon binary.)
     let front = std::process::Command::new("/usr/bin/lsappinfo")
@@ -123,42 +125,45 @@ fn get_frontmost_app_macos() -> Result<AppInfo, String> {
     })
 }
 
-fn parse_front_asn(stdout: &str) -> Option<String> {
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("ASN:") {
-            let asn = format!("ASN:{rest}");
-            return Some(asn.trim_end_matches(':').to_string());
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod lsappinfo_parse {
+    pub fn parse_front_asn(stdout: &str) -> Option<String> {
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("ASN:") {
+                let asn = format!("ASN:{rest}");
+                return Some(asn.trim_end_matches(':').to_string());
+            }
         }
+        None
     }
-    None
-}
 
-fn parse_lsappinfo_field(stdout: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{key}\"=");
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix(&needle) {
-            return parse_quoted_value(rest);
+    pub fn parse_lsappinfo_field(stdout: &str, key: &str) -> Option<String> {
+        let needle = format!("\"{key}\"=");
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix(&needle) {
+                return parse_quoted_value(rest);
+            }
         }
+        None
     }
-    None
-}
 
-fn parse_quoted_value(raw: &str) -> Option<String> {
-    let raw = raw.trim();
-    if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
-        return Some(raw[1..raw.len() - 1].to_string());
+    fn parse_quoted_value(raw: &str) -> Option<String> {
+        let raw = raw.trim();
+        if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+            return Some(raw[1..raw.len() - 1].to_string());
+        }
+        if raw == "[ NULL ]" || raw.is_empty() {
+            return None;
+        }
+        Some(raw.to_string())
     }
-    if raw == "[ NULL ]" || raw.is_empty() {
-        return None;
-    }
-    Some(raw.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::lsappinfo_parse::{parse_front_asn, parse_lsappinfo_field};
 
     #[test]
     fn parse_front_asn_from_lsappinfo_output() {
