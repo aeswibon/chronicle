@@ -1,7 +1,7 @@
 cask "chronicle" do
   version "0.1.0"
-  sha256 arm:   "7877f6fdf6b7f85327cd4f530a94cea15e0cf439acd32b095f595711ac2cebbb",
-         intel: "dbc8a5e931b5640aa6f2da96b65409d5ce4861d7dc2a93b534617ff19e5a640b"
+  sha256 arm:   "b9079e5414946817c62d36474645d430a777780ec0f3e2bccc1b699894a99f46",
+         intel: "b5cd8e8fb4ee1c2ffd7683000233253738caad5b5cf96d9d07a4c2c97d4a5cc6"
 
   url "https://github.com/aeswibon/chronicle/releases/download/v#{version}/chronicle-#{arch == :arm64 ? "arm64" : "x64"}.dmg"
   name "Chronicle"
