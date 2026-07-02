@@ -36,5 +36,7 @@ if (fs.existsSync(focusSrc)) {
   fs.chmodSync(focusDest, 0o755);
   console.log(`Bundled focus monitor (${triple}) → ${focusDest}`);
 } else {
-  console.warn(`Focus monitor binary missing at ${focusSrc} — run cargo build -p chronicle-daemon`);
+  throw new Error(
+    `Focus monitor binary missing at ${focusSrc}. Run: cargo build --release -p chronicle-daemon${targetFlag}`,
+  );
 }

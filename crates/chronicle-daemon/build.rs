@@ -21,6 +21,7 @@ fn compile_macos_helpers() {
             &scripts.join("focus_monitor.swift"),
             &["AppKit", "ApplicationServices"],
         );
+        stage_helper_beside_target(&out, &focus_bin, "chronicle-focus-monitor");
         println!(
             "cargo:rustc-env=CHRONICLE_FOCUS_MONITOR_HELPER={}",
             focus_bin.display()
@@ -37,6 +38,34 @@ fn compile_macos_helpers() {
             window_bin.display()
         );
     }
+}
+
+#[cfg(target_os = "macos")]
+fn stage_helper_beside_target(out_dir: &std::path::Path, src: &std::path::Path, name: &str) {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let Some(release_dir) = out_dir.parent().and_then(|p| p.parent()) else {
+        return;
+    };
+    let dest = PathBuf::from(release_dir).join(name);
+    if let Err(e) = fs::copy(src, &dest) {
+        eprintln!(
+            "cargo:warning=failed to stage {name} at {}: {e}",
+            dest.display()
+        );
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = fs::metadata(&dest) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(&dest, perms);
+        }
+    }
+    println!("cargo:rerun-if-changed={}", dest.display());
 }
 
 #[cfg(target_os = "macos")]
