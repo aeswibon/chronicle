@@ -1,5 +1,5 @@
 cask "chronicle" do
-  version "0.1.1"
+  version "0.1.2"
 
   on_arm do
     sha256 "82263f135762f0297b04b10fa97118450a867614aa8cb0918d0d28d168f5b4d5"

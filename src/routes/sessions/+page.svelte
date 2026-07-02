@@ -60,18 +60,36 @@
     }
   }
 
-  /** @param {{ id: string; started_at: number }} session */
+  /** @param {{ id?: string; session_id?: string; started_at: number }} session */
+  function sessionIdOf(session) {
+    const raw = session?.id ?? session?.session_id;
+    return raw == null ? '' : String(raw).trim();
+  }
+
+  /** @param {{ id?: string; session_id?: string; started_at: number }} session */
   async function deleteSession(session) {
+    const id = sessionIdOf(session);
+    if (!id) {
+      error = 'Cannot delete: missing session id. Refresh the list and try again.';
+      return;
+    }
     if (!confirm(`Delete the summary for ${formatDateTime(session.started_at)}?`)) {
       return;
     }
-    deletingId = session.id;
+    deletingId = id;
     error = '';
     try {
-      await invoke('delete_session', { id: session.id });
-      sessions = sessions.filter((s) => s.id !== session.id);
+      await invoke('delete_session', { id });
+      sessions = sessions.filter((s) => sessionIdOf(s) !== id);
+      if (preview && sessionIdOf(preview) === id) {
+        preview = null;
+      }
     } catch (e) {
-      error = String(e);
+      const msg = String(e);
+      error = msg;
+      if (/not found/i.test(msg)) {
+        await load();
+      }
     } finally {
       deletingId = null;
     }
@@ -93,7 +111,7 @@
   </div>
 
   {#if error}
-    <p class="text-sm text-[var(--text-secondary)] mb-4">{error}</p>
+    <p class="text-sm text-red-400 mb-4">{error}</p>
   {/if}
 
   {#if notice}
@@ -158,10 +176,10 @@
               <button
                 type="button"
                 onclick={() => deleteSession(session)}
-                disabled={deletingId === session.id}
+                disabled={deletingId === sessionIdOf(session)}
                 class="mt-2 text-[11px] text-[var(--text-muted)] hover:text-red-400 transition-colors disabled:opacity-50"
               >
-                {deletingId === session.id ? 'Deleting…' : 'Delete'}
+                {deletingId === sessionIdOf(session) ? 'Deleting…' : 'Delete'}
               </button>
             </div>
           </div>

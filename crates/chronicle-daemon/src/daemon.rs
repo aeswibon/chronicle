@@ -49,6 +49,31 @@ fn supplement_active_spans(active: &mut Vec<Span>, focus_ctx: &FocusContext) {
     }
 }
 
+async fn active_spans_for_timeline_async(
+    pipeline: &Arc<Mutex<PipelineState>>,
+    focus_ctx: &FocusContext,
+) -> Vec<Span> {
+    let mut active = {
+        let p = pipeline.lock().await;
+        p.span_processor.active_spans()
+    };
+    {
+        let p = pipeline.lock().await;
+        p.annotate_active_spans(&mut active);
+    }
+    supplement_active_spans(&mut active, focus_ctx);
+    active
+}
+
+fn find_span_by_id(active: &[Span], id: &str) -> Option<Span> {
+    if let Ok(uuid) = uuid::Uuid::parse_str(id) {
+        if let Some(span) = active.iter().find(|s| s.id == uuid) {
+            return Some(span.clone());
+        }
+    }
+    active.iter().find(|s| s.id.to_string() == id).cloned()
+}
+
 fn merge_timeline_spans(
     mut stored: Vec<Span>,
     active: Vec<Span>,
@@ -161,16 +186,20 @@ impl Daemon {
             .await;
         });
 
+        #[cfg(target_os = "macos")]
+        {
+            if let Err(e) = collectors::macos_focus::install_helper_beside_daemon() {
+                warn!("focus monitor helper install skipped: {e}");
+            }
+        }
+
         let collector_cfg = chronicle_config::load().collectors;
 
         let mut collectors: Vec<collectors::Collector> = Vec::new();
         if collector_cfg.window_focus {
-            #[cfg(not(target_os = "macos"))]
             collectors.push(collectors::Collector::WindowFocus(
                 collectors::window_focus::WindowFocusCollector::new(capture_status.clone()),
             ));
-            #[cfg(target_os = "macos")]
-            info!("window focus on macOS is relayed by Chronicle.app (GUI session); git/shell/filesystem still run here");
         }
         if collector_cfg.filesystem {
             collectors.push(collectors::Collector::Filesystem(
@@ -408,10 +437,11 @@ async fn handle_connection(
                         )
                         .await
                         {
-                            Ok((summary, source, session)) => DaemonResponse::DailySummary {
+                            Ok((summary, source, ai_error, session)) => DaemonResponse::DailySummary {
                                 summary,
                                 session,
                                 source: Some(source),
+                                ai_error,
                             },
                             Err(message) => DaemonResponse::Error { code: 500, message },
                         }
@@ -490,15 +520,9 @@ async fn handle_connection(
                             } => match guard.query_spans(since, until, limit) {
                                 Ok(stored) => {
                                     drop(guard);
-                                    let mut active = {
-                                        let p = pipeline.lock().await;
-                                        p.span_processor.active_spans()
-                                    };
-                                    {
-                                        let p = pipeline.lock().await;
-                                        p.annotate_active_spans(&mut active);
-                                    }
-                                    supplement_active_spans(&mut active, &focus_ctx);
+                                    let active =
+                                        active_spans_for_timeline_async(&pipeline, &focus_ctx)
+                                            .await;
                                     DaemonResponse::Timeline {
                                         spans: merge_timeline_spans(stored, active, since, limit),
                                     }
@@ -559,16 +583,15 @@ async fn handle_connection(
                                 drop(guard);
                                 let mut active = {
                                     let p = pipeline.lock().await;
-                                    p.span_processor
-                                        .active_spans()
+                                    let mut spans = p.span_processor.active_spans();
+                                    p.annotate_active_spans(&mut spans);
+                                    spans
                                         .into_iter()
-                                        .filter(|s| s.project.as_deref() == Some(project.as_str()))
+                                        .filter(|s| {
+                                            s.project.as_deref() == Some(project.as_str())
+                                        })
                                         .collect::<Vec<_>>()
                                 };
-                                {
-                                    let p = pipeline.lock().await;
-                                    p.annotate_active_spans(&mut active);
-                                }
                                 supplement_active_spans(&mut active, &focus_ctx);
                                 DaemonResponse::ProjectContext {
                                     project: project_record,
@@ -597,10 +620,37 @@ async fn handle_connection(
                                         };
                                         DaemonResponse::SpanDetail { span, events }
                                     }
-                                    Ok(None) => DaemonResponse::Error {
-                                        code: 404,
-                                        message: format!("span not found: {id}"),
-                                    },
+                                    Ok(None) => {
+                                        drop(guard);
+                                        let active =
+                                            active_spans_for_timeline_async(&pipeline, &focus_ctx)
+                                                .await;
+                                        if let Some(span) = find_span_by_id(&active, &id) {
+                                            let guard = store.lock().await;
+                                            let since = span.started_at;
+                                            let until = span.ended_at.unwrap_or(i64::MAX);
+                                            let events = if let Some(ref project) = span.project {
+                                                guard
+                                                    .query_activity_events_for_project(
+                                                        project,
+                                                        since,
+                                                        Some(until),
+                                                        event_limit,
+                                                    )
+                                                    .unwrap_or_default()
+                                            } else {
+                                                guard
+                                                    .query_events(since, Some(until), event_limit)
+                                                    .unwrap_or_default()
+                                            };
+                                            DaemonResponse::SpanDetail { span, events }
+                                        } else {
+                                            DaemonResponse::Error {
+                                                code: 404,
+                                                message: format!("span not found: {id}"),
+                                            }
+                                        }
+                                    }
                                     Err(e) => DaemonResponse::Error {
                                         code: 500,
                                         message: format!("span query failed: {e}"),

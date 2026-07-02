@@ -74,7 +74,7 @@ fn default_ollama_base() -> String {
 }
 
 fn default_ai_model() -> String {
-    "llama3.2".into()
+    "smallthinker".into()
 }
 
 fn default_ai_timeout() -> u64 {

@@ -211,7 +211,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chronicle-ai"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chronicle-config",
@@ -228,7 +228,7 @@ dependencies = [
 
 [[package]]
 name = "chronicle-config"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "dirs",
@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "chronicle-core"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "serde",
@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "chronicle-daemon"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "chronicle-hooks"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "dirs",
@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "chronicle-ipc"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "chronicle-config",
  "chronicle-core",
@@ -301,7 +301,7 @@ dependencies = [
 
 [[package]]
 name = "chronicle-mcp"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chronicle-core",
@@ -319,7 +319,7 @@ dependencies = [
 
 [[package]]
 name = "chronicle-plugin"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "chronicle-core",
  "dirs",
@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "chronicle-store"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "chronicle-ai",
  "chronicle-core",
@@ -1686,6 +1686,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2115,6 +2121,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

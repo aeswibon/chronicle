@@ -36,7 +36,7 @@ pub async fn summarize_and_persist_day(
     store: Arc<Mutex<Store>>,
     since: i64,
     until: i64,
-) -> Result<(String, String, Session), String> {
+) -> Result<(String, String, Option<String>, Session), String> {
     let ai_cfg = chronicle_config::load().ai;
     let day_end_exclusive = day_end_exclusive(since);
 
@@ -51,14 +51,21 @@ pub async fn summarize_and_persist_day(
         (spans, events)
     };
 
-    let (summary, source) = summarize_day(&ai_cfg, since, until, &spans, &events).await;
-    let source_str = match source {
+    let outcome = summarize_day(&ai_cfg, since, until, &spans, &events).await;
+    let source_str = match outcome.source {
         SummarySource::Ai => "ai",
         SummarySource::Rules => "rules",
     }
     .to_string();
 
-    let session = build_daily_session(since, until, &spans, &events, summary.clone(), &source_str);
+    let session = build_daily_session(
+        since,
+        until,
+        &spans,
+        &events,
+        outcome.summary.clone(),
+        &source_str,
+    );
 
     let guard = store.lock().await;
     guard
@@ -68,7 +75,7 @@ pub async fn summarize_and_persist_day(
         .insert_session(&session)
         .map_err(|e| format!("session persist failed: {e}"))?;
 
-    Ok((summary, source_str, session))
+    Ok((outcome.summary, source_str, outcome.ai_error, session))
 }
 
 pub fn spawn_maintenance_tasks(store: Arc<Mutex<Store>>) {
@@ -149,7 +156,7 @@ async fn auto_daily_summary_loop(store: Arc<Mutex<Store>>) {
         }
 
         match summarize_and_persist_day(store.clone(), since, until).await {
-            Ok((_, source, _)) => info!("auto daily summary persisted ({source})"),
+            Ok((_, source, _, _)) => info!("auto daily summary persisted ({source})"),
             Err(e) => warn!("auto daily summary failed: {e}"),
         }
     }

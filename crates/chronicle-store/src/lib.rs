@@ -488,8 +488,15 @@ impl Store {
                 _ => chronicle_core::SessionType::Focus,
             };
             let id: String = row.get(0)?;
+            let id = uuid::Uuid::parse_str(id.trim()).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
             Ok(chronicle_core::Session {
-                id: uuid::Uuid::parse_str(&id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                id,
                 session_type,
                 started_at: row.get(2)?,
                 ended_at: row.get(3)?,

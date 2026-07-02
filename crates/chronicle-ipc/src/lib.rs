@@ -149,6 +149,8 @@ pub enum DaemonResponse {
         session: chronicle_core::Session,
         #[serde(default)]
         source: Option<String>,
+        #[serde(default)]
+        ai_error: Option<String>,
     },
     Plugins {
         plugins: Vec<chronicle_plugin::PluginRecord>,
@@ -191,7 +193,7 @@ mod tests {
                     conn.send_response(DaemonResponse::Status {
                         uptime_secs: 42,
                         events_count: 100,
-                        version: "0.1.0".into(),
+                        version: env!("CARGO_PKG_VERSION").into(),
                         macos_capture: None,
                     })
                     .await
@@ -213,7 +215,7 @@ mod tests {
             } => {
                 assert_eq!(uptime_secs, 42);
                 assert_eq!(events_count, 100);
-                assert_eq!(version, "0.1.0");
+                assert_eq!(version, env!("CARGO_PKG_VERSION"));
             }
             _ => panic!("unexpected response"),
         }

@@ -20,14 +20,12 @@ pub fn run() {
             client: Mutex::new(None),
         })
         .setup(|_app| {
-            let socket = daemon_manage::default_socket_string();
             std::thread::spawn(|| {
                 if let Err(e) = daemon_manage::ensure_daemon_running() {
                     eprintln!("chronicle ensure_daemon: {e}");
                 }
             });
-            #[cfg(target_os = "macos")]
-            focus_relay::spawn_focus_relay(socket);
+            // Window focus is captured by chronicle-daemon (launchctl asuser helper).
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -51,6 +49,8 @@ pub fn run() {
             commands::get_span_detail,
             commands::get_config,
             commands::set_config,
+            commands::test_ai_connection,
+            commands::list_ollama_models,
             commands::install_shell_hook,
             commands::restart_daemon,
             commands::prune_noise_events,

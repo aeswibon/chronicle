@@ -291,11 +291,13 @@ impl ChronicleMcp {
                     summary,
                     session,
                     source,
+                    ai_error,
                 }) => text_result(
                     serde_json::to_string_pretty(&serde_json::json!({
                         "summary": summary,
                         "source": source.unwrap_or_else(|| "rules".into()),
                         "session": session,
+                        "ai_error": ai_error,
                     }))
                     .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}")),
                 ),

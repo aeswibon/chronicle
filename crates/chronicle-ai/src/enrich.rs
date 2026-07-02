@@ -149,7 +149,9 @@ fn build_report_line(
             let title = event
                 .metadata
                 .get("window_title")
+                .or_else(|| event.metadata.get("tab_title"))
                 .and_then(|v| v.as_str())
+                .filter(|t| !t.is_empty() && *t != app)
                 .map(|t| format!(" — {t}"))
                 .unwrap_or_default();
             let agent = is_agent_app_name(app);

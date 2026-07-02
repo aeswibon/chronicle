@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-02
+
+### Added
+
+- **Ollama integration** — test connection and list models from Settings; default model `smallthinker`
+- **Focus monitor bundling** — `chronicle-focus-monitor` shipped beside the daemon in app releases
+
+### Changed
+
+- **macOS focus capture** — daemon runs the focus monitor via `launchctl asuser` (no longer depends on the UI relay)
+- **AI summaries** — stronger anti-reasoning prompt and post-processing for chain-of-thought models
+
+### Fixed
+
+- **Span detail 404** — `GetSpan` resolves active in-memory spans, not only closed rows in SQLite
+- **Safari / window titles** — Accessibility window titles and tab sessions recorded again
+- **Delete summary** — stable daily session IDs; delete no longer fails on stale IDs
+- **Sessions UI** — safer delete handling and summarize error surfacing
+- **MCP summarize** — handle `ai_error` in daily summary responses
+
 ## [0.1.1] - 2026-07-01
 
 ### Added

@@ -2,7 +2,7 @@
   "name": "chronicle-vscode",
   "displayName": "Chronicle",
   "description": "Emit IDE activity events to chronicle-daemon",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "publisher": "chronicle",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],

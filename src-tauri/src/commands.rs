@@ -214,6 +214,7 @@ pub struct SummarizeResult {
     pub persisted: bool,
     pub source: String,
     pub notice: Option<String>,
+    pub ai_error: Option<String>,
 }
 
 fn summarize_needs_fallback(message: &str) -> bool {
@@ -251,17 +252,17 @@ async fn summarize_day_fallback(
         _ => return Err("unexpected events response".into()),
     };
 
-    let cfg = chronicle_config::load();
-    let (summary, source) =
-        chronicle_ai::summarize_day(&cfg.ai, since, until, &spans, &events).await;
-    let source = match source {
+    let config = chronicle_config::load();
+    let outcome = chronicle_ai::summarize_day(&config.ai, since, until, &spans, &events).await;
+    let source = match outcome.source {
         chronicle_ai::SummarySource::Ai => "ai",
         chronicle_ai::SummarySource::Rules => "rules",
     };
     Ok(SummarizeResult {
-        summary,
+        summary: outcome.summary,
         persisted: false,
         source: source.into(),
+        ai_error: outcome.ai_error,
         notice: Some(
             "Summary generated locally. Rebuild and restart the daemon to persist rollups: make install-daemon".into(),
         ),
@@ -270,6 +271,11 @@ async fn summarize_day_fallback(
 
 #[tauri::command]
 pub async fn delete_session(state: State<'_, DaemonState>, id: String) -> Result<(), String> {
+    let id = id.trim().to_string();
+    if id.is_empty() {
+        return Err("session id is required".into());
+    }
+
     let socket_path = state.socket_path.clone();
     let mut client = Client::connect(&socket_path).await?;
     match client
@@ -314,12 +320,16 @@ pub async fn summarize_day(
         DaemonResponse::DailySummary {
             summary,
             source,
+            ai_error,
             ..
         } => Ok(SummarizeResult {
             summary,
             persisted: true,
             source: source.unwrap_or_else(|| "rules".into()),
-            notice: None,
+            notice: ai_error.as_ref().map(|e| {
+                format!("AI summary unavailable ({e}). Used rules-based rollup instead.")
+            }),
+            ai_error,
         }),
         DaemonResponse::Error { message, .. } if summarize_needs_fallback(&message) => {
             summarize_day_fallback(&mut client, since, until).await
@@ -392,6 +402,22 @@ pub async fn get_span_detail(
         DaemonResponse::Error { message, .. } => Err(message),
         _ => Err("unexpected response".into()),
     }
+}
+
+#[tauri::command]
+pub async fn test_ai_connection(ai: AiInfo) -> Result<String, String> {
+    let cfg: chronicle_config::AiConfig = ai.into();
+    chronicle_ai::test_connection(&cfg)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_ollama_models(ai: AiInfo) -> Result<Vec<String>, String> {
+    let cfg: chronicle_config::AiConfig = ai.into();
+    chronicle_ai::list_ollama_models(&cfg)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Serialize, Deserialize)]

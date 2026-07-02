@@ -8,6 +8,7 @@ pub mod summary_filter;
 
 pub use context::DayReportContext;
 pub use enrich::enrich_event;
+pub use llm::{list_ollama_models, test_connection};
 
 use chronicle_config::AiConfig;
 use chronicle_core::{CanonicalEvent, Session, SessionType, Span};
@@ -17,6 +18,13 @@ use tracing::{debug, warn};
 pub enum SummarySource {
     Ai,
     Rules,
+}
+
+#[derive(Debug, Clone)]
+pub struct SummarizeOutcome {
+    pub summary: String,
+    pub source: SummarySource,
+    pub ai_error: Option<String>,
 }
 
 /// Expand a user query for FTS when semantic mode is requested.
@@ -64,7 +72,7 @@ pub async fn summarize_day(
     until: i64,
     spans: &[Span],
     events: &[CanonicalEvent],
-) -> (String, SummarySource) {
+) -> SummarizeOutcome {
     let prepared: Vec<CanonicalEvent> = events
         .iter()
         .map(|e| {
@@ -78,14 +86,38 @@ pub async fn summarize_day(
         match llm::generate_summary(ai, &ctx).await {
             Ok(text) => {
                 debug!("AI daily summary generated ({} chars)", text.len());
-                return (text, SummarySource::Ai);
+                return SummarizeOutcome {
+                    summary: text,
+                    source: SummarySource::Ai,
+                    ai_error: None,
+                };
             }
-            Err(e) => warn!("AI summary failed, using rules: {e}"),
+            Err(e) => {
+                let msg = e.to_string();
+                warn!("AI summary failed, using rules: {msg}");
+                return SummarizeOutcome {
+                    summary: rule_summary::daily_summary(since, until, spans, &prepared),
+                    source: SummarySource::Rules,
+                    ai_error: Some(msg),
+                };
+            }
         }
     }
-    (
-        rule_summary::daily_summary(since, until, spans, &prepared),
-        SummarySource::Rules,
+    SummarizeOutcome {
+        summary: rule_summary::daily_summary(since, until, spans, &prepared),
+        source: SummarySource::Rules,
+        ai_error: None,
+    }
+}
+
+/// Stable id for a calendar-day rollup so regenerate/replace does not orphan UI rows.
+pub fn daily_session_id(since: i64) -> uuid::Uuid {
+    let date = chrono::DateTime::from_timestamp_millis(since)
+        .map(|dt| dt.with_timezone(&chrono::Local).date_naive().to_string())
+        .unwrap_or_else(|| since.to_string());
+    uuid::Uuid::new_v5(
+        &uuid::Uuid::NAMESPACE_OID,
+        format!("chronicle-daily:{date}").as_bytes(),
     )
 }
 
@@ -110,7 +142,7 @@ pub fn build_daily_session(
         });
 
     Session {
-        id: uuid::Uuid::new_v4(),
+        id: daily_session_id(since),
         session_type: SessionType::Focus,
         // Stamp when the summary was generated so the list sorts newest-first.
         started_at: until,
@@ -137,6 +169,36 @@ mod tests {
     fn expands_debug_query() {
         let q = expand_search_query("debugging session");
         assert!(q.contains("lldb"));
+    }
+
+    #[test]
+    fn daily_session_id_is_stable_for_same_day() {
+        let since = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .and_then(|t| t.and_local_timezone(chrono::Local).single())
+            .map(|dt| dt.timestamp_millis())
+            .unwrap_or(0);
+        assert_eq!(daily_session_id(since), daily_session_id(since));
+    }
+
+    #[test]
+    fn session_id_serializes_as_string() {
+        use chronicle_core::{Session, SessionType};
+        let session = Session {
+            id: daily_session_id(0),
+            session_type: SessionType::Focus,
+            started_at: 1,
+            ended_at: None,
+            duration_ms: None,
+            project: None,
+            span_count: 0,
+            event_count: 0,
+            summary: Some("hello".into()),
+            summary_source: Some("rules".into()),
+        };
+        let json = serde_json::to_value(&session).unwrap();
+        assert!(json.get("id").and_then(|v| v.as_str()).is_some());
     }
 
     #[test]

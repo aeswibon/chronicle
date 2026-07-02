@@ -21,10 +21,14 @@
   let ai = $state({
     enabled: false,
     base_url: 'http://127.0.0.1:11434',
-    model: 'llama3.2',
+    model: 'smallthinker',
     api_key_env: '',
     timeout_secs: 60,
   });
+  let ollamaModels = $state(/** @type {string[]} */ ([]));
+  let aiTestMessage = $state('');
+  let testingAi = $state(false);
+  let loadingModels = $state(false);
   let summaries = $state({
     auto_daily: true,
     auto_daily_hour_local: 21,
@@ -72,7 +76,7 @@
         ai = {
           enabled: a.enabled ?? false,
           base_url: a.baseUrl ?? a.base_url ?? 'http://127.0.0.1:11434',
-          model: a.model ?? 'llama3.2',
+          model: a.model ?? 'smallthinker',
           api_key_env: a.apiKeyEnv ?? a.api_key_env ?? '',
           timeout_secs: a.timeoutSecs ?? a.timeout_secs ?? 60,
         };
@@ -85,7 +89,41 @@
         };
       }
     } catch {}
+    await refreshOllamaModels();
   });
+
+  function buildAiPayload() {
+    return {
+      enabled: ai.enabled,
+      baseUrl: ai.base_url.trim(),
+      model: ai.model.trim(),
+      apiKeyEnv: ai.api_key_env.trim() || null,
+      timeoutSecs: ai.timeout_secs,
+    };
+  }
+
+  async function refreshOllamaModels() {
+    loadingModels = true;
+    try {
+      ollamaModels = await invoke('list_ollama_models', { ai: buildAiPayload() });
+    } catch {
+      ollamaModels = [];
+    } finally {
+      loadingModels = false;
+    }
+  }
+
+  async function testAiConnection() {
+    testingAi = true;
+    aiTestMessage = '';
+    try {
+      aiTestMessage = await invoke('test_ai_connection', { ai: buildAiPayload() });
+    } catch (e) {
+      aiTestMessage = String(e);
+    } finally {
+      testingAi = false;
+    }
+  }
 
   function buildConfigPayload() {
     const dirs = watchDirs
@@ -458,9 +496,15 @@
         <input
           type="text"
           bind:value={ai.model}
-          placeholder="llama3.2"
+          list="ollama-model-options"
+          placeholder="smallthinker"
           class="mt-1 w-full text-sm font-mono bg-[var(--bg-muted)] border border-[var(--border)] rounded-lg px-3 py-2 text-[var(--text)]"
         />
+        <datalist id="ollama-model-options">
+          {#each ollamaModels as modelName}
+            <option value={modelName}></option>
+          {/each}
+        </datalist>
       </label>
       <label class="block text-sm text-[var(--text-secondary)]">
         API key env var
@@ -482,6 +526,32 @@
         />
       </label>
     </div>
+    <div class="flex flex-wrap items-center gap-3 mb-3">
+      <button
+        type="button"
+        onclick={testAiConnection}
+        disabled={testingAi || !ai.model.trim()}
+        class="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text)] hover:bg-[var(--bg-muted)] transition-colors disabled:opacity-50"
+      >
+        {testingAi ? 'Testing…' : 'Test connection'}
+      </button>
+      <button
+        type="button"
+        onclick={refreshOllamaModels}
+        disabled={loadingModels}
+        class="px-4 py-2 text-sm rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-muted)] transition-colors disabled:opacity-50"
+      >
+        {loadingModels ? 'Refreshing…' : 'Refresh models'}
+      </button>
+      {#if ollamaModels.length > 0}
+        <span class="text-xs text-[var(--text-muted)]">{ollamaModels.length} model(s) from Ollama</span>
+      {/if}
+    </div>
+    {#if aiTestMessage}
+      <p class="text-sm mb-3 {aiTestMessage.startsWith('Connected') ? 'text-[var(--text-secondary)]' : 'text-red-400'}">
+        {aiTestMessage}
+      </p>
+    {/if}
     <p class="text-xs text-[var(--text-muted)] mt-3">
       Use <strong class="font-medium">Save settings</strong> below to persist AI, privacy, collectors, and watch directories together.
     </p>
