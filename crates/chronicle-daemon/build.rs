@@ -43,18 +43,17 @@ fn compile_macos_helpers() {
 #[cfg(target_os = "macos")]
 fn stage_helper_beside_target(out_dir: &std::path::Path, src: &std::path::Path, name: &str) {
     use std::fs;
-    use std::path::PathBuf;
 
-    let Some(release_dir) = out_dir.parent().and_then(|p| p.parent()) else {
+    let Some(release_dir) = out_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+    else {
         return;
     };
-    let dest = PathBuf::from(release_dir).join(name);
+    let dest = release_dir.join(name);
     if let Err(e) = fs::copy(src, &dest) {
-        eprintln!(
-            "cargo:warning=failed to stage {name} at {}: {e}",
-            dest.display()
-        );
-        return;
+        panic!("failed to stage {name} at {}: {e}", dest.display());
     }
     #[cfg(unix)]
     {

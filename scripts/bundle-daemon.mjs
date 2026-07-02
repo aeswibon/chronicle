@@ -19,10 +19,26 @@ execSync(`cargo build --release -p chronicle-daemon${targetFlag}`, {
 const src = path.join(root, 'target', triple, 'release/chronicle-daemon') + ext;
 const srcFallback = path.join(root, 'target/release/chronicle-daemon') + ext;
 const from = fs.existsSync(src) ? src : srcFallback;
-const focusSrc =
-  (fs.existsSync(path.join(root, 'target', triple, 'release/chronicle-focus-monitor'))
-    ? path.join(root, 'target', triple, 'release/chronicle-focus-monitor')
-    : path.join(root, 'target/release/chronicle-focus-monitor')) + ext;
+function findFocusMonitor(root, triple) {
+  const candidates = [
+    path.join(root, 'target', triple, 'release/chronicle-focus-monitor'),
+    path.join(root, 'target/release/chronicle-focus-monitor'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  const buildRoot = path.join(root, 'target', triple, 'release/build');
+  if (fs.existsSync(buildRoot)) {
+    for (const entry of fs.readdirSync(buildRoot)) {
+      const out = path.join(buildRoot, entry, 'out/chronicle-focus-monitor');
+      if (fs.existsSync(out)) return out;
+    }
+  }
+  return null;
+}
+
+const focusSrc = findFocusMonitor(root, triple);
 const destDir = path.join(root, 'src-tauri/binaries');
 const dest = path.join(destDir, `chronicle-daemon-${triple}${ext}`);
 const focusDest = path.join(destDir, `chronicle-focus-monitor-${triple}${ext}`);
@@ -31,12 +47,12 @@ fs.mkdirSync(destDir, { recursive: true });
 fs.copyFileSync(from, dest);
 fs.chmodSync(dest, 0o755);
 console.log(`Bundled daemon (${triple}) → ${dest}`);
-if (fs.existsSync(focusSrc)) {
+if (focusSrc) {
   fs.copyFileSync(focusSrc, focusDest);
   fs.chmodSync(focusDest, 0o755);
   console.log(`Bundled focus monitor (${triple}) → ${focusDest}`);
 } else {
   throw new Error(
-    `Focus monitor binary missing at ${focusSrc}. Run: cargo build --release -p chronicle-daemon${targetFlag}`,
+    `Focus monitor binary missing for ${triple}. Run: cargo build --release -p chronicle-daemon${targetFlag}`,
   );
 }
