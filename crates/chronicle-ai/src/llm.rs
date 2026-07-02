@@ -79,7 +79,7 @@ fn ollama_tags_url(base_url: &str) -> String {
     }
     .trim_end_matches('/')
     .to_string()
-    + "/api/tags"
+        + "/api/tags"
 }
 
 fn resolve_api_key(config: &AiConfig) -> Option<String> {
@@ -178,9 +178,10 @@ pub async fn test_connection(config: &AiConfig) -> anyhow::Result<String> {
         req = req.bearer_auth(key);
     }
 
-    let resp = req.send().await.map_err(|e| {
-        anyhow::anyhow!("chat request to {url} failed: {e}")
-    })?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("chat request to {url} failed: {e}"))?;
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -224,9 +225,10 @@ pub async fn generate_summary(config: &AiConfig, ctx: &DayReportContext) -> anyh
         req = req.bearer_auth(key);
     }
 
-    let resp = req.send().await.map_err(|e| {
-        anyhow::anyhow!("chat request to {url} failed: {e}")
-    })?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("chat request to {url} failed: {e}"))?;
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -257,7 +259,8 @@ mod tests {
 
     #[test]
     fn strips_chain_of_thought_prefix() {
-        let raw = "To answer this, let me think... Today, I fixed the Homebrew cask and pushed v0.1.1.";
+        let raw =
+            "To answer this, let me think... Today, I fixed the Homebrew cask and pushed v0.1.1.";
         let out = clean_summary(raw);
         assert!(out.starts_with("Today,"));
         assert!(!out.contains("let me think"));

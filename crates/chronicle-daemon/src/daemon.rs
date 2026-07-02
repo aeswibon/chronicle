@@ -437,12 +437,14 @@ async fn handle_connection(
                         )
                         .await
                         {
-                            Ok((summary, source, ai_error, session)) => DaemonResponse::DailySummary {
-                                summary,
-                                session,
-                                source: Some(source),
-                                ai_error,
-                            },
+                            Ok((summary, source, ai_error, session)) => {
+                                DaemonResponse::DailySummary {
+                                    summary,
+                                    session,
+                                    source: Some(source),
+                                    ai_error,
+                                }
+                            }
                             Err(message) => DaemonResponse::Error { code: 500, message },
                         }
                     }
@@ -587,9 +589,7 @@ async fn handle_connection(
                                     p.annotate_active_spans(&mut spans);
                                     spans
                                         .into_iter()
-                                        .filter(|s| {
-                                            s.project.as_deref() == Some(project.as_str())
-                                        })
+                                        .filter(|s| s.project.as_deref() == Some(project.as_str()))
                                         .collect::<Vec<_>>()
                                 };
                                 supplement_active_spans(&mut active, &focus_ctx);
