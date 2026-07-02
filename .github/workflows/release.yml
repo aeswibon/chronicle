@@ -222,9 +222,9 @@ jobs:
           X64=$(cut -d' ' -f1 release-checksums/checksums-x64.txt)
           test "$(shasum -a 256 release-dmgs/chronicle-arm64.dmg | awk '{print $1}')" = "$ARM"
           test "$(shasum -a 256 release-dmgs/chronicle-x64.dmg | awk '{print $1}')" = "$X64"
-          rg -q "version \"${VERSION}\"" Casks/chronicle.rb
-          rg -q "$ARM" Casks/chronicle.rb
-          rg -q "$X64" Casks/chronicle.rb
+          grep -q "version \"${VERSION}\"" Casks/chronicle.rb
+          grep -q "$ARM" Casks/chronicle.rb
+          grep -q "$X64" Casks/chronicle.rb
 
       - name: Commit and push cask update
         run: |

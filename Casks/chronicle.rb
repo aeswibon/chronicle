@@ -2,12 +2,12 @@ cask "chronicle" do
   version "0.1.2"
 
   on_arm do
-    sha256 "82263f135762f0297b04b10fa97118450a867614aa8cb0918d0d28d168f5b4d5"
+    sha256 "028d98d678e9eba7353213fad10231eab56bb33572eeef6a0769bd92ab5c75b9"
     url "https://github.com/aeswibon/chronicle/releases/download/v#{version}/chronicle-arm64.dmg"
   end
 
   on_intel do
-    sha256 "5ea67f6894710bbc1bebe3893fcd1a08db52e2915b6caa2a9fd6d8469841b05b"
+    sha256 "162b51586814cbb54aafaa9678d5c08e296d5c7776ddd8e39971de0b4f7d686f"
     url "https://github.com/aeswibon/chronicle/releases/download/v#{version}/chronicle-x64.dmg"
   end
 
