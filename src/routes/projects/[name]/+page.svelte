@@ -114,7 +114,7 @@
                     class:bg-[var(--accent)]={isSpanActive(span)}
                     class:bg-[var(--text-muted)]={!isSpanActive(span)}
                   ></span>
-                  <span class="text-sm font-medium text-[var(--text)]">{spanTypeLabel(span.span_type)}</span>
+                  <span class="text-sm font-medium text-[var(--text)]">{spanTypeLabel(span)}</span>
                   <span class="text-xs text-[var(--text-muted)]">{formatDuration(span.duration_ms)}</span>
                 </div>
                 <span class="text-xs text-[var(--text-muted)] tabular-nums">{formatTime(span.started_at)}</span>

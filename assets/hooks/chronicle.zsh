@@ -8,12 +8,15 @@ __chronicle_send() {
   command -v python3 >/dev/null 2>&1 || return 0
   python3 - "$@" <<'PY' 2>/dev/null
 import json, socket, sys
-cmd, exit_code, dur, cwd = sys.argv[1:5]
+cmd, exit_code, dur, cwd, shell, tty, ppid = sys.argv[1:8]
 payload = json.dumps({
     "cmd": cmd,
     "exit_code": int(exit_code),
     "dur": int(dur),
     "cwd": cwd,
+    "shell": shell or None,
+    "tty": tty or None,
+    "ppid": int(ppid) if ppid and ppid.isdigit() else None,
 }).encode()
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.sendto(payload, ("127.0.0.1", 9712))
@@ -30,7 +33,7 @@ __chronicle_precmd() {
   local exit_code=$?
   local dur_ms
   dur_ms=$(python3 -c "print(int((${EPOCHREALTIME} - ${_CHRONICLE_START}) * 1000))" 2>/dev/null) || dur_ms=0
-  __chronicle_send "$_CHRONICLE_CMD" "$exit_code" "$dur_ms" "$PWD"
+  __chronicle_send "$_CHRONICLE_CMD" "$exit_code" "$dur_ms" "$PWD" "${ZSH_NAME:-zsh}" "${TTY:-}" "$PPID"
   unset _CHRONICLE_CMD _CHRONICLE_START
 }
 

@@ -1,5 +1,6 @@
 //! Deterministic activity labels from shell and git events (no AI).
 
+use crate::app_classify::{is_agent_app, is_browser_app, is_finder_app, is_ide_app, is_terminal_app};
 use chronicle_core::{CanonicalEvent, EventCategory, Span};
 use serde_json::json;
 use std::collections::HashSet;
@@ -107,10 +108,10 @@ fn single_event_label(event: &CanonicalEvent) -> Option<&'static str> {
 }
 
 fn os_label(event: &CanonicalEvent) -> Option<&'static str> {
-    match event.r#type.as_str() {
-        "process.focus" => process_focus_label(event),
-        "window.focus" => window_focus_label(event),
-        _ => None,
+    if event.r#type == "process.focus" {
+        process_focus_label(event)
+    } else {
+        None
     }
 }
 
@@ -118,15 +119,6 @@ fn process_focus_label(event: &CanonicalEvent) -> Option<&'static str> {
     app_context_label(event)
 }
 
-fn window_focus_label(event: &CanonicalEvent) -> Option<&'static str> {
-    if is_browser_app(event) {
-        Some("browsing")
-    } else if is_finder_app(event) {
-        Some("files")
-    } else {
-        None
-    }
-}
 
 fn app_context_label(event: &CanonicalEvent) -> Option<&'static str> {
     if is_agent_app(event) {
@@ -147,103 +139,6 @@ fn app_context_label(event: &CanonicalEvent) -> Option<&'static str> {
     None
 }
 
-fn is_agent_app(event: &CanonicalEvent) -> bool {
-    let app = event
-        .metadata
-        .get("app_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&event.source)
-        .to_lowercase();
-    let bundle = event
-        .metadata
-        .get("bundle_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_lowercase();
-    [
-        "cursor",
-        "claude",
-        "codex",
-        "gemini",
-        "windsurf",
-        "copilot",
-        "aider",
-        "opencode",
-        "antigravity",
-    ]
-    .iter()
-    .any(|n| app.contains(n) || bundle.contains(n))
-}
-
-fn is_terminal_app(event: &CanonicalEvent) -> bool {
-    let app = event
-        .metadata
-        .get("app_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&event.source)
-        .to_lowercase();
-    [
-        "terminal",
-        "iterm",
-        "warp",
-        "ghostty",
-        "alacritty",
-        "kitty",
-        "wezterm",
-    ]
-    .iter()
-    .any(|n| app.contains(n))
-}
-
-fn is_ide_app(event: &CanonicalEvent) -> bool {
-    let app = event
-        .metadata
-        .get("app_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&event.source)
-        .to_lowercase();
-    app.contains("xcode")
-        || app.contains("intellij")
-        || app.contains("android studio")
-        || (app.contains("code") && !app.contains("cursor"))
-}
-
-fn is_browser_app(event: &CanonicalEvent) -> bool {
-    let app = event
-        .metadata
-        .get("app_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&event.source)
-        .to_lowercase();
-    let bundle = event
-        .metadata
-        .get("bundle_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_lowercase();
-    [
-        "safari", "chrome", "firefox", "brave", "arc", "edge", "opera", "vivaldi", "chromium",
-    ]
-    .iter()
-    .any(|n| app.contains(n) || bundle.contains(n))
-}
-
-fn is_finder_app(event: &CanonicalEvent) -> bool {
-    let app = event
-        .metadata
-        .get("app_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&event.source)
-        .to_lowercase();
-    let bundle = event
-        .metadata
-        .get("bundle_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_lowercase();
-    app.contains("finder") || bundle.contains("com.apple.finder")
-}
-
 fn shell_label(event: &CanonicalEvent) -> Option<&'static str> {
     let cmd = event.metadata.get("command")?.as_str()?.to_lowercase();
     if cmd.contains("git push") {
@@ -254,6 +149,8 @@ fn shell_label(event: &CanonicalEvent) -> Option<&'static str> {
         Some("merge")
     } else if cmd.contains("git pull") {
         Some("pull")
+    } else if matches_git_inspection_cmd(&cmd) {
+        Some("git inspection")
     } else if matches_test_cmd(&cmd) {
         Some("test iteration")
     } else if matches_debug_cmd(&cmd) {
@@ -304,6 +201,16 @@ fn has_deploy_command(events: &[&CanonicalEvent]) -> bool {
             .and_then(|v| v.as_str())
             .is_some_and(|c| matches_deploy_cmd(&c.to_lowercase()))
     })
+}
+
+fn matches_git_inspection_cmd(cmd: &str) -> bool {
+    const NEEDLES: &[&str] = &[
+        "git status",
+        "git diff",
+        "git log",
+        "git show",
+    ];
+    NEEDLES.iter().any(|n| cmd.contains(n))
 }
 
 fn matches_test_cmd(cmd: &str) -> bool {
@@ -393,12 +300,34 @@ mod tests {
 
     #[test]
     fn labels_finder_window_switch() {
-        let mut e = CanonicalEvent::new("Finder", EventCategory::Os, "window.focus");
+        let mut e = CanonicalEvent::new("Finder", EventCategory::Os, "process.focus");
         e.metadata = json!({"app_name": "Finder", "bundle_id": "com.apple.finder", "window_title": "Downloads"});
         annotate_event(&mut e);
         assert_eq!(
             e.metadata.get("activity_label").and_then(|v| v.as_str()),
             Some("files")
+        );
+    }
+
+    #[test]
+    fn labels_shell_git_status_as_inspection() {
+        let mut e = CanonicalEvent::new("zsh", EventCategory::Shell, "command.completed");
+        e.metadata = json!({"command": "git status"});
+        annotate_event(&mut e);
+        assert_eq!(
+            e.metadata.get("activity_label").and_then(|v| v.as_str()),
+            Some("git inspection")
+        );
+    }
+
+    #[test]
+    fn labels_shell_git_diff_as_inspection() {
+        let mut e = CanonicalEvent::new("zsh", EventCategory::Shell, "command.completed");
+        e.metadata = json!({"command": "git diff --stat"});
+        annotate_event(&mut e);
+        assert_eq!(
+            e.metadata.get("activity_label").and_then(|v| v.as_str()),
+            Some("git inspection")
         );
     }
 

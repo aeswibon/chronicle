@@ -23,6 +23,7 @@ pub struct MacosCaptureInfo {
 
 #[derive(Serialize)]
 pub struct StatusInfo {
+    pub app_version: String,
     pub uptime_secs: u64,
     pub events_count: u64,
     pub version: String,
@@ -42,6 +43,7 @@ pub async fn get_status(state: State<'_, DaemonState>) -> Result<StatusInfo, Str
             version,
             macos_capture,
         } => Ok(StatusInfo {
+            app_version: daemon_manage::app_version().into(),
             uptime_secs,
             events_count,
             version,
@@ -215,6 +217,9 @@ pub struct SummarizeResult {
     pub source: String,
     pub notice: Option<String>,
     pub ai_error: Option<String>,
+    pub span_count: u32,
+    pub event_count: u32,
+    pub duration_ms: Option<u64>,
 }
 
 fn summarize_needs_fallback(message: &str) -> bool {
@@ -258,11 +263,19 @@ async fn summarize_day_fallback(
         chronicle_ai::SummarySource::Ai => "ai",
         chronicle_ai::SummarySource::Rules => "rules",
     };
+    let focus_ms: u64 = spans.iter().map(|s| s.duration_ms.unwrap_or(0)).sum();
     Ok(SummarizeResult {
         summary: outcome.summary,
         persisted: false,
         source: source.into(),
         ai_error: outcome.ai_error,
+        span_count: spans.len() as u32,
+        event_count: events.len() as u32,
+        duration_ms: if focus_ms > 0 {
+            Some(focus_ms)
+        } else {
+            Some((until - since).max(0) as u64)
+        },
         notice: Some(
             "Summary generated locally. Rebuild and restart the daemon to persist rollups: make install-daemon".into(),
         ),
@@ -321,6 +334,7 @@ pub async fn summarize_day(
             summary,
             source,
             ai_error,
+            session,
             ..
         } => Ok(SummarizeResult {
             summary,
@@ -330,6 +344,9 @@ pub async fn summarize_day(
                 format!("AI summary unavailable ({e}). Used rules-based rollup instead.")
             }),
             ai_error,
+            span_count: session.span_count,
+            event_count: session.event_count,
+            duration_ms: session.duration_ms,
         }),
         DaemonResponse::Error { message, .. } if summarize_needs_fallback(&message) => {
             summarize_day_fallback(&mut client, since, until).await

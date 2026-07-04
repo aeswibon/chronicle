@@ -23,6 +23,7 @@ impl FocusEmitter {
         bundle_id: &str,
         pid: i32,
         window_title: Option<String>,
+        folder_path: Option<String>,
         title_source: &str,
         timestamp_ms: i64,
         capture_relay: Option<&str>,
@@ -31,9 +32,12 @@ impl FocusEmitter {
             return None;
         }
 
-        let change = self
-            .tracker
-            .observe(name, bundle_id, window_title.as_deref())?;
+        let change = self.tracker.observe(
+            name,
+            bundle_id,
+            window_title.as_deref(),
+            folder_path.as_deref(),
+        )?;
 
         let mut event = CanonicalEvent::new(name, EventCategory::Os, "process.focus");
         event.timestamp = timestamp_ms;
@@ -41,6 +45,11 @@ impl FocusEmitter {
         if let Some((project, root)) = window_title
             .as_deref()
             .and_then(project::detect_project_from_title)
+            .or_else(|| {
+                folder_path
+                    .as_deref()
+                    .and_then(|path| project::detect_project(std::path::Path::new(path)))
+            })
         {
             event = event.with_project(&project);
             let meta = event.metadata.as_object_mut().unwrap();
@@ -54,6 +63,7 @@ impl FocusEmitter {
             pid,
             &change,
             window_title,
+            folder_path,
             title_source,
             capture_relay,
         );
@@ -67,18 +77,25 @@ impl FocusEmitter {
         bundle_id: &str,
         pid: i32,
         window_title: Option<String>,
+        folder_path: Option<String>,
     ) {
         if event_filter::is_transient_focus_app(name, bundle_id) {
             return;
         }
         let detected_project = window_title
             .as_ref()
-            .and_then(|title| project::detect_project_from_title(title).map(|(p, _)| p));
+            .and_then(|title| project::detect_project_from_title(title).map(|(p, _)| p))
+            .or_else(|| {
+                folder_path.as_ref().and_then(|path| {
+                    project::detect_project(std::path::Path::new(path)).map(|(p, _)| p)
+                })
+            });
         focus.set(FocusSnapshot::from_app_info(
             name,
             bundle_id,
             pid,
             window_title,
+            folder_path,
             detected_project,
         ));
     }
@@ -92,6 +109,7 @@ pub fn attach_focus_meta(
     pid: i32,
     change: &TabSessionChange,
     window_title: Option<String>,
+    folder_path: Option<String>,
     title_source: &str,
     capture_relay: Option<&str>,
 ) {
@@ -115,6 +133,9 @@ pub fn attach_focus_meta(
     }
     if let Some(title) = window_title {
         meta.insert("window_title".into(), title.into());
+    }
+    if let Some(path) = folder_path {
+        meta.insert("folder_path".into(), path.into());
     }
 }
 
@@ -142,7 +163,13 @@ pub fn ensure_tab_session_meta(event: &mut CanonicalEvent) {
         .get("window_title")
         .or_else(|| obj.get("tab_title"))
         .and_then(|v| v.as_str());
-    let key = chronicle_core::tab_session::tab_session_key(app, bundle, window_title);
+    let folder_path = obj.get("folder_path").and_then(|v| v.as_str());
+    let key = chronicle_core::tab_session::tab_session_key(
+        app,
+        bundle,
+        window_title,
+        folder_path,
+    );
     let tab_title = window_title
         .map(chronicle_core::tab_session::normalize_tab_title)
         .filter(|t| !t.is_empty())

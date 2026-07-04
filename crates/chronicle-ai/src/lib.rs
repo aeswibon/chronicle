@@ -85,11 +85,22 @@ pub async fn summarize_day(
     if ai.enabled {
         match llm::generate_summary(ai, &ctx).await {
             Ok(text) => {
-                debug!("AI daily summary generated ({} chars)", text.len());
+                if let Some(summary) = llm::polish_summary(&text) {
+                    debug!("AI daily summary generated ({} chars)", summary.len());
+                    return SummarizeOutcome {
+                        summary,
+                        source: SummarySource::Ai,
+                        ai_error: None,
+                    };
+                }
+                warn!("AI summary looked like chain-of-thought, using rules");
                 return SummarizeOutcome {
-                    summary: text,
-                    source: SummarySource::Ai,
-                    ai_error: None,
+                    summary: rule_summary::daily_summary(since, until, spans, &prepared),
+                    source: SummarySource::Rules,
+                    ai_error: Some(
+                        "AI returned reasoning text instead of a summary; used rules-based rollup"
+                            .into(),
+                    ),
                 };
             }
             Err(e) => {
@@ -144,8 +155,7 @@ pub fn build_daily_session(
     Session {
         id: daily_session_id(since),
         session_type: SessionType::Focus,
-        // Stamp when the summary was generated so the list sorts newest-first.
-        started_at: until,
+        started_at: since,
         ended_at: Some(until),
         duration_ms: if focus_ms > 0 {
             Some(focus_ms)

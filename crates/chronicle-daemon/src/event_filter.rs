@@ -1,5 +1,7 @@
 //! Privacy sanitization and recording policy.
 
+use chronicle_core::shell_noise;
+
 use chronicle_config::PrivacyConfig;
 use chronicle_core::{CanonicalEvent, EventCategory};
 
@@ -157,59 +159,7 @@ fn should_record_shell(event: &CanonicalEvent) -> bool {
         return false;
     }
 
-    if is_shell_noise_cmd(trimmed) {
-        return false;
-    }
-
-    if event.r#type == "command.failed" && is_exploratory_failure(trimmed) {
-        return false;
-    }
-
-    let first = trimmed.split_whitespace().next().unwrap_or("");
-    let base = first.rsplit('/').next().unwrap_or(first);
-
-    const NOISE: &[&str] = &[
-        "cd", "ls", "pwd", "clear", "echo", "exit", "fg", "bg", "jobs", "pushd", "popd", "dirs",
-        "history", "which", "type", "true", "false", ":", "printf", "test", "[", "[[",
-    ];
-
-    !NOISE.contains(&base)
-}
-
-fn is_shell_noise_cmd(cmd: &str) -> bool {
-    let trimmed = cmd.trim();
-    if trimmed.contains("| pbcopy")
-        || trimmed.contains("| pbpaste")
-        || trimmed.contains("pbcopy")
-        || trimmed.contains("pbpaste")
-    {
-        return true;
-    }
-
-    let first = trimmed.split_whitespace().next().unwrap_or("");
-    let base = first.rsplit('/').next().unwrap_or(first);
-
-    const NOISE: &[&str] = &[
-        "cat", "head", "tail", "wc", "less", "more", "open", "tee", "touch", "stat", "file",
-    ];
-
-    if NOISE.contains(&base) {
-        return true;
-    }
-
-    if base == "rm" {
-        let lower = trimmed.to_lowercase();
-        return lower.contains("~/.")
-            || lower.contains("/.cursor")
-            || lower.contains("/.agent")
-            || lower.contains("node_modules");
-    }
-
-    false
-}
-
-fn is_exploratory_failure(cmd: &str) -> bool {
-    is_shell_noise_cmd(cmd)
+    !shell_noise::is_shell_noise_cmd(trimmed)
 }
 
 fn should_record_git(event: &CanonicalEvent) -> bool {
@@ -217,7 +167,7 @@ fn should_record_git(event: &CanonicalEvent) -> bool {
 }
 
 fn should_record_filesystem(event: &CanonicalEvent) -> bool {
-    matches!(event.r#type.as_str(), "file.created" | "file.deleted")
+    matches!(event.r#type.as_str(), "file.created" | "file.deleted" | "file.moved")
 }
 
 #[cfg(test)]

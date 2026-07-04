@@ -87,8 +87,13 @@ fn detect_outcome(event: &CanonicalEvent) -> &'static str {
     if event.r#type.contains("failed") {
         return "failure";
     }
-    if let Some(code) = event.metadata.get("exit_code").and_then(|v| v.as_str()) {
-        return if code == "0" { "success" } else { "failure" };
+    if let Some(code) = event.metadata.get("exit_code") {
+        if let Some(s) = code.as_str() {
+            return if s == "0" { "success" } else { "failure" };
+        }
+        if let Some(n) = code.as_i64() {
+            return if n == 0 { "success" } else { "failure" };
+        }
     }
     "neutral"
 }
@@ -132,13 +137,26 @@ fn build_report_line(
             format!("{tool_prefix}{cmd}{project}{dur}{status}")
         }
         EventCategory::Git => {
-            let detail = event
+            let msg = event
                 .metadata
-                .get("reflog")
-                .or_else(|| event.metadata.get("branch"))
-                .and_then(|v| v.as_str())
+                .get("commit_message")
+                .and_then(|v| v.as_str());
+            let detail = msg
+                .or_else(|| {
+                    event
+                        .metadata
+                        .get("reflog")
+                        .or_else(|| event.metadata.get("branch"))
+                        .and_then(|v| v.as_str())
+                })
                 .unwrap_or(&event.r#type);
-            format!("git {detail}{project}")
+            let stats = event
+                .metadata
+                .get("diff_stats")
+                .and_then(|v| v.as_str())
+                .map(|s| format!(" ({s})"))
+                .unwrap_or_default();
+            format!("git {detail}{stats}{project}")
         }
         EventCategory::Os => {
             let app = event
@@ -155,6 +173,15 @@ fn build_report_line(
                 .map(|t| format!(" — {t}"))
                 .unwrap_or_default();
             let agent = is_agent_app_name(app);
+            if crate::summary_filter::is_terminal_container_app(app) {
+                if let Some(p) = event.project.as_deref() {
+                    return format!("Terminal work in {p}{title}");
+                }
+                if title.is_empty() {
+                    return "Terminal session".to_string();
+                }
+                return format!("Terminal session{title}");
+            }
             if event.r#type == "window.focus" {
                 if title.is_empty() {
                     format!("Window changed in {app}{project}")
@@ -232,7 +259,8 @@ mod tests {
         let line = e.metadata["report_line"].as_str().unwrap();
         assert!(!line.to_lowercase().contains("focused"));
         assert!(!line.to_lowercase().contains("switched"));
-        assert!(line.contains("Ghostty"));
+        assert!(line.contains("Terminal session"));
+        assert!(!line.contains("Ghostty"));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Filters for daily summaries — exclude terminal noise, rank meaningful work.
 
+use chronicle_core::shell_noise;
 use chronicle_core::{CanonicalEvent, EventCategory, Span, SpanType};
 use std::collections::HashMap;
 
@@ -36,7 +37,7 @@ pub fn is_meaningful_failure(event: &CanonicalEvent) -> bool {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_lowercase();
-    if is_shell_noise_cmd(&cmd) {
+    if shell_noise::is_shell_noise_cmd(&cmd) {
         return false;
     }
     const SIGNAL: &[&str] = &[
@@ -61,6 +62,15 @@ pub fn is_meaningful_failure(event: &CanonicalEvent) -> bool {
     SIGNAL.iter().any(|s| cmd.contains(s))
 }
 
+pub fn is_terminal_container_app(app: &str) -> bool {
+    let lower = app.to_lowercase();
+    [
+        "ghostty", "terminal", "iterm", "warp", "alacritty", "kitty", "wezterm",
+    ]
+    .iter()
+    .any(|name| lower.contains(name))
+}
+
 pub fn is_high_signal(event: &CanonicalEvent) -> bool {
     if is_summary_noise(event) {
         return false;
@@ -71,12 +81,32 @@ pub fn is_high_signal(event: &CanonicalEvent) -> bool {
             "commit.created" | "merge.completed" | "push.completed" | "rebase.completed"
         ),
         EventCategory::Ide | EventCategory::Build => true,
-        EventCategory::Shell => event
-            .metadata
-            .get("activity_label")
-            .and_then(|v| v.as_str())
-            .is_some_and(|l| !is_generic_theme(l)),
-        EventCategory::Os => event.r#type == "process.focus",
+        EventCategory::Shell => {
+            if is_shell_noise(event) {
+                return false;
+            }
+            event.project.is_some()
+                || event
+                    .metadata
+                    .get("activity_label")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|l| !is_generic_theme(l))
+        }
+        EventCategory::Filesystem => matches!(
+            event.r#type.as_str(),
+            "file.created" | "file.deleted" | "file.moved"
+        ),
+        EventCategory::Os => {
+            if event.r#type != "process.focus" {
+                return false;
+            }
+            let app = event
+                .metadata
+                .get("app_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            !(is_terminal_container_app(app) && event.project.is_none())
+        }
         _ => false,
     }
 }
@@ -162,47 +192,9 @@ fn is_shell_noise(event: &CanonicalEvent) -> bool {
         .get("command")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    is_shell_noise_cmd(cmd)
+    shell_noise::is_shell_noise_cmd(cmd)
 }
 
-fn is_shell_noise_cmd(cmd: &str) -> bool {
-    let trimmed = cmd.trim();
-    if trimmed.is_empty() {
-        return true;
-    }
-    if trimmed.contains("| pbcopy")
-        || trimmed.contains("| pbpaste")
-        || trimmed.contains("pbcopy")
-        || trimmed.contains("pbpaste")
-    {
-        return true;
-    }
-
-    let first = trimmed.split_whitespace().next().unwrap_or("");
-    let base = first.rsplit('/').next().unwrap_or(first);
-
-    const NOISE: &[&str] = &[
-        "cd", "ls", "pwd", "clear", "echo", "exit", "fg", "bg", "jobs", "pushd", "popd", "dirs",
-        "history", "which", "type", "true", "false", ":", "printf", "test", "[", "[[", "cat",
-        "head", "tail", "wc", "less", "more", "open", "xargs", "tee", "touch", "mkdir", "rmdir",
-        "mv", "cp", "chmod", "chown", "stat", "file", "du", "df", "env", "export", "unset",
-        "alias", "unalias", "source", "builtin", "command", "hash", "sleep", "date", "cal",
-    ];
-
-    if NOISE.contains(&base) {
-        return true;
-    }
-
-    if base == "rm" {
-        let lower = trimmed.to_lowercase();
-        return lower.contains("~/.")
-            || lower.contains("/.cursor")
-            || lower.contains("/.agent")
-            || lower.contains("node_modules");
-    }
-
-    false
-}
 
 #[cfg(test)]
 mod tests {

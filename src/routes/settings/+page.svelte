@@ -4,7 +4,7 @@
   import PageShell from '$lib/components/PageShell.svelte';
   import { theme, setTheme } from '$lib/theme.svelte.js';
 
-  let status = $state(/** @type {{ version: string; events_count: number; uptime_secs: number; macos_capture?: { monitor_running: boolean; frontmost_app?: string; title_source?: string; accessibility_trusted: boolean; screen_capture_granted: boolean; can_read_window_titles: boolean } } | null} */ (null));
+  let status = $state(/** @type {{ app_version?: string; version: string; events_count: number; uptime_secs: number; macos_capture?: { monitor_running: boolean; frontmost_app?: string; title_source?: string; accessibility_trusted: boolean; screen_capture_granted: boolean; can_read_window_titles: boolean } } | null} */ (null));
   let watchDirs = $state('');
   let collectors = $state({
     window_focus: true,
@@ -652,9 +652,18 @@
     <div class="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl divide-y divide-[var(--border-subtle)]">
       {#if status}
         <div class="flex items-center justify-between px-5 py-4">
-          <span class="text-sm text-[var(--text-secondary)]">Version</span>
+          <span class="text-sm text-[var(--text-secondary)]">App version</span>
+          <span class="text-sm text-[var(--text)] tabular-nums">{status.app_version ?? '—'}</span>
+        </div>
+        <div class="flex items-center justify-between px-5 py-4">
+          <span class="text-sm text-[var(--text-secondary)]">Daemon version</span>
           <span class="text-sm text-[var(--text)] tabular-nums">{status.version}</span>
         </div>
+        {#if status.app_version && status.app_version !== status.version}
+          <p class="text-xs text-amber-600 dark:text-amber-400 px-5 pb-4 leading-relaxed">
+            Daemon is older than the app. Click <strong class="font-medium">Restart daemon</strong> to switch to the bundled service.
+          </p>
+        {/if}
         <div class="flex items-center justify-between px-5 py-4">
           <span class="text-sm text-[var(--text-secondary)]">Events recorded</span>
           <span class="text-sm text-[var(--text)] tabular-nums">{status.events_count}</span>

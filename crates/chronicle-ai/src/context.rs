@@ -13,6 +13,17 @@ pub struct DayReportContext {
     pub until: i64,
     pub stats: DayStats,
     pub highlights: Vec<HighlightLine>,
+    pub span_work: Vec<SpanWorkDigest>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SpanWorkDigest {
+    pub started_at: i64,
+    pub project: Option<String>,
+    pub span_type: String,
+    pub commands: Vec<String>,
+    pub git: Vec<String>,
+    pub files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -44,11 +55,13 @@ impl DayReportContext {
             .collect();
         let stats = compute_stats(spans, &filtered);
         let highlights = select_highlights(&filtered);
+        let span_work = collect_span_work(spans);
         Self {
             since,
             until,
             stats,
             highlights,
+            span_work,
         }
     }
 
@@ -74,6 +87,30 @@ impl DayReportContext {
         if !self.stats.intents.is_empty() {
             out.push_str(&format!("Intents: {}\n", self.stats.intents.join(", ")));
         }
+        if !self.span_work.is_empty() {
+            out.push_str("\nFocus sessions with captured work:\n");
+            for s in &self.span_work {
+                let proj = s
+                    .project
+                    .as_deref()
+                    .map(|p| format!(" [{p}]"))
+                    .unwrap_or_default();
+                out.push_str(&format!(
+                    "- {} {}{proj}\n",
+                    format_local_ts(s.started_at),
+                    s.span_type
+                ));
+                for c in &s.commands {
+                    out.push_str(&format!("  shell: {c}\n"));
+                }
+                for g in &s.git {
+                    out.push_str(&format!("  git: {g}\n"));
+                }
+                for f in &s.files {
+                    out.push_str(&format!("  file: {f}\n"));
+                }
+            }
+        }
         out.push_str("\nHighlights (chronological):\n");
         for h in &self.highlights {
             let proj = h
@@ -96,6 +133,41 @@ impl DayReportContext {
         }
         out
     }
+}
+
+fn collect_span_work(spans: &[Span]) -> Vec<SpanWorkDigest> {
+    let mut out = Vec::new();
+    for span in spans {
+        let Some(obj) = span.metadata.as_object() else {
+            continue;
+        };
+        let commands = json_string_list(obj.get("recent_commands"));
+        let git = json_string_list(obj.get("recent_git"));
+        let files = json_string_list(obj.get("recent_files"));
+        if commands.is_empty() && git.is_empty() && files.is_empty() {
+            continue;
+        }
+        out.push(SpanWorkDigest {
+            started_at: span.started_at,
+            project: span.project.clone(),
+            span_type: format!("{:?}", span.span_type),
+            commands,
+            git,
+            files,
+        });
+    }
+    out
+}
+
+fn json_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn compute_stats(spans: &[Span], events: &[CanonicalEvent]) -> DayStats {
@@ -208,6 +280,19 @@ fn score_event(event: &CanonicalEvent) -> i32 {
     }
     if event.category == chronicle_core::EventCategory::Build {
         score += 6;
+    }
+    if event.category == chronicle_core::EventCategory::Filesystem {
+        score += 12;
+    }
+    if event.category == chronicle_core::EventCategory::Os && event.r#type == "process.focus" {
+        let app = event
+            .metadata
+            .get("app_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if crate::summary_filter::is_terminal_container_app(app) && event.project.is_none() {
+            return 0;
+        }
     }
     if is_meaningful_failure(event) {
         score += 5;

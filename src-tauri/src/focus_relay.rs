@@ -15,6 +15,7 @@ struct FocusSample {
     bundle_id: String,
     pid: i32,
     window_title: Option<String>,
+    folder_path: Option<String>,
     title_source: String,
     timestamp_ms: i64,
 }
@@ -43,9 +44,12 @@ fn run_focus_relay(socket_path: &str) {
                     let Ok(sample) = serde_json::from_str::<FocusSample>(&line) else {
                         continue;
                     };
-                    let Some(change) =
-                        tracker.observe(&sample.name, &sample.bundle_id, sample.window_title.as_deref())
-                    else {
+                    let Some(change) = tracker.observe(
+                        &sample.name,
+                        &sample.bundle_id,
+                        sample.window_title.as_deref(),
+                        sample.folder_path.as_deref(),
+                    ) else {
                         continue;
                     };
                     let mut event =
@@ -66,6 +70,9 @@ fn run_focus_relay(socket_path: &str) {
                     );
                     if let Some(title) = sample.window_title.clone() {
                         meta.insert("window_title".into(), title.into());
+                    }
+                    if let Some(path) = sample.folder_path.clone() {
+                        meta.insert("folder_path".into(), path.into());
                     }
                     let socket = socket_path.to_string();
                     rt.block_on(async move {

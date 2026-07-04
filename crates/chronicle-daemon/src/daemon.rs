@@ -42,10 +42,16 @@ fn supplement_active_spans(active: &mut Vec<Span>, focus_ctx: &FocusContext) {
     if !active.is_empty() {
         return;
     }
-    if let Some(snap) = focus_ctx.snapshot() {
-        if let Some(span) = focus_context::open_span_from_focus(&snap) {
-            active.push(span);
-        }
+    let Some(snap) = focus_ctx.snapshot() else {
+        return;
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    // Avoid synthetic multi-hour spans after daemon restart with stale focus.
+    if snap.focused_at > 0 && now.saturating_sub(snap.focused_at) > 15 * 60 * 1000 {
+        return;
+    }
+    if let Some(span) = focus_context::open_span_from_focus(&snap) {
+        active.push(span);
     }
 }
 
@@ -55,12 +61,10 @@ async fn active_spans_for_timeline_async(
 ) -> Vec<Span> {
     let mut active = {
         let p = pipeline.lock().await;
-        p.span_processor.active_spans()
+        let mut spans = p.span_processor.active_spans();
+        p.annotate_active_spans(&mut spans);
+        spans
     };
-    {
-        let p = pipeline.lock().await;
-        p.annotate_active_spans(&mut active);
-    }
     supplement_active_spans(&mut active, focus_ctx);
     active
 }
@@ -92,6 +96,69 @@ fn merge_timeline_spans(
     all.sort_by_key(|b| std::cmp::Reverse(b.started_at));
     all.truncate(limit as usize);
     all
+}
+
+fn event_matches_span(span: &Span, event: &CanonicalEvent) -> bool {
+    let meta = event.metadata.as_object();
+    let span_key = span
+        .metadata
+        .get("tab_session_key")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let span_app = span
+        .metadata
+        .get("app_name")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+
+    if span_key.is_none() && span_app.is_none() && span.project.is_none() {
+        return true;
+    }
+
+    if let Some(key) = span_key {
+        let event_key = meta
+            .and_then(|m| m.get("tab_session_key"))
+            .and_then(|v| v.as_str());
+        return event_key == Some(key);
+    }
+
+    if let Some(app) = span_app {
+        let event_app = meta
+            .and_then(|m| m.get("app_name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(event.source.as_str());
+        return event_app.eq_ignore_ascii_case(app) || event.source.eq_ignore_ascii_case(app);
+    }
+
+    if span.project.is_some() {
+        return event.project.as_deref() == span.project.as_deref();
+    }
+
+    true
+}
+
+fn events_for_span(
+    guard: &Store,
+    span: &Span,
+    event_limit: u32,
+) -> Vec<CanonicalEvent> {
+    let since = span.started_at;
+    let until = span.ended_at.unwrap_or(i64::MAX);
+    let fetch = event_limit.saturating_mul(3).max(event_limit);
+    let mut events = if let Some(ref project) = span.project {
+        guard
+            .query_activity_events_for_project(project, since, Some(until), fetch)
+            .unwrap_or_default()
+    } else {
+        guard
+            .query_activity_events(since, Some(until), fetch)
+            .unwrap_or_default()
+    };
+    if span.project.is_none() {
+        events.retain(|e| event_matches_span(span, e));
+    }
+    events.truncate(event_limit as usize);
+    events
 }
 
 pub struct Daemon {
@@ -335,6 +402,10 @@ async fn process_events(
         let focus = focus_ctx.snapshot();
         if !focus_context::applies_to_focus(&event, focus.as_ref()) {
             continue;
+        }
+
+        if let Some(project) = event.project.as_deref() {
+            focus_ctx.note_project(project);
         }
 
         let mut closed_spans = Vec::new();
@@ -602,22 +673,7 @@ async fn handle_connection(
                             DaemonRequest::GetSpan { id, event_limit } => {
                                 match guard.query_span_by_id(&id) {
                                     Ok(Some(span)) => {
-                                        let since = span.started_at;
-                                        let until = span.ended_at.unwrap_or(i64::MAX);
-                                        let events = if let Some(ref project) = span.project {
-                                            guard
-                                                .query_activity_events_for_project(
-                                                    project,
-                                                    since,
-                                                    Some(until),
-                                                    event_limit,
-                                                )
-                                                .unwrap_or_default()
-                                        } else {
-                                            guard
-                                                .query_events(since, Some(until), event_limit)
-                                                .unwrap_or_default()
-                                        };
+                                        let events = events_for_span(&guard, &span, event_limit);
                                         DaemonResponse::SpanDetail { span, events }
                                     }
                                     Ok(None) => {
@@ -627,22 +683,8 @@ async fn handle_connection(
                                                 .await;
                                         if let Some(span) = find_span_by_id(&active, &id) {
                                             let guard = store.lock().await;
-                                            let since = span.started_at;
-                                            let until = span.ended_at.unwrap_or(i64::MAX);
-                                            let events = if let Some(ref project) = span.project {
-                                                guard
-                                                    .query_activity_events_for_project(
-                                                        project,
-                                                        since,
-                                                        Some(until),
-                                                        event_limit,
-                                                    )
-                                                    .unwrap_or_default()
-                                            } else {
-                                                guard
-                                                    .query_events(since, Some(until), event_limit)
-                                                    .unwrap_or_default()
-                                            };
+                                            let events =
+                                                events_for_span(&guard, &span, event_limit);
                                             DaemonResponse::SpanDetail { span, events }
                                         } else {
                                             DaemonResponse::Error {

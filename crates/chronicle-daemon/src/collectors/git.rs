@@ -15,6 +15,8 @@ const BACKFILL_MAX_LINES: usize = 40;
 struct PersistedGitCursors {
     line_counts: HashMap<String, usize>,
     head_content: HashMap<String, String>,
+    #[serde(default)]
+    backfill_done: HashSet<String>,
 }
 
 fn cursors_path() -> PathBuf {
@@ -27,6 +29,7 @@ fn cursors_path() -> PathBuf {
 struct GitScanState {
     line_counts: HashMap<String, usize>,
     head_content: HashMap<String, String>,
+    backfill_done: HashSet<String>,
     dirty: bool,
     logged_repos: HashSet<String>,
     /// First daemon run: seed cursors only — do not ingest historical reflogs.
@@ -44,6 +47,7 @@ impl GitScanState {
         Self {
             line_counts: persisted.line_counts,
             head_content: persisted.head_content,
+            backfill_done: persisted.backfill_done,
             dirty: false,
             logged_repos: HashSet::new(),
             bootstrap: !file_existed,
@@ -61,6 +65,7 @@ impl GitScanState {
         let persisted = PersistedGitCursors {
             line_counts: self.line_counts.clone(),
             head_content: self.head_content.clone(),
+            backfill_done: self.backfill_done.clone(),
         };
         if let Ok(raw) = serde_json::to_string(&persisted) {
             let _ = std::fs::write(path, raw);
@@ -71,7 +76,14 @@ impl GitScanState {
 
 impl Default for GitScanState {
     fn default() -> Self {
-        Self::load()
+        Self {
+            line_counts: HashMap::new(),
+            head_content: HashMap::new(),
+            backfill_done: HashSet::new(),
+            dirty: false,
+            logged_repos: HashSet::new(),
+            bootstrap: false,
+        }
     }
 }
 
@@ -87,7 +99,7 @@ impl GitCollector {
     pub async fn run(self, tx: tokio_mpsc::Sender<CanonicalEvent>) {
         let watch_dirs = self.watch_dirs.clone();
         tokio::task::spawn_blocking(move || {
-            let mut state = GitScanState::default();
+            let mut state = GitScanState::load();
             let mut roots = if watch_dirs.is_empty() {
                 crate::watch_dirs::resolve_watch_dirs(&[])
             } else {
@@ -253,6 +265,7 @@ fn scan_reflog_file(
     for (idx, line) in lines.iter().enumerate() {
         let is_new = idx >= prev_count;
         let in_backfill = prev_count > 0
+            && !state.backfill_done.contains(&key)
             && backfill_budget > 0
             && is_backfill_candidate(&rel)
             && parse_reflog_timestamp_ms(line).is_some_and(|ts| ts >= cutoff);
@@ -272,6 +285,10 @@ fn scan_reflog_file(
         }
     }
 
+    if prev_count > 0 && !state.backfill_done.contains(&key) {
+        state.backfill_done.insert(key.clone());
+        state.dirty = true;
+    }
     if prev_count != lines.len() {
         state.line_counts.insert(key, lines.len());
         state.dirty = true;
@@ -339,12 +356,67 @@ fn parse_reflog_line(path: &Path, line: &str) -> Option<CanonicalEvent> {
     event.timestamp = timestamp;
 
     let meta = event.metadata.as_object_mut().unwrap();
-    meta.insert("reflog".into(), message.into());
+    let repo_root = repo_root(path);
+    enrich_reflog_metadata(meta, line, message, repo_root.as_deref());
     meta.insert("ref".into(), rel.into());
     if let Some(root) = project_path_for_git(path) {
         meta.insert("project_path".into(), root.into());
     }
     Some(event)
+}
+
+fn git_commit_shortstat(repo_root: &Path, commit: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args([
+            "-C",
+            &repo_root.to_string_lossy(),
+            "show",
+            "--shortstat",
+            "-s",
+            commit,
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("file changed") || trimmed.contains("files changed") {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
+}
+
+fn enrich_reflog_metadata(
+    meta: &mut serde_json::Map<String, serde_json::Value>,
+    line: &str,
+    message: &str,
+    repo_root: Option<&Path>,
+) {
+    meta.insert("reflog".into(), message.into());
+    let header = line.split('\t').next().unwrap_or(line);
+    let tokens: Vec<&str> = header.split_whitespace().collect();
+    if tokens.len() >= 2 {
+        meta.insert("commit_hash".into(), tokens[1].into());
+    }
+    if tokens.len() >= 3 {
+        meta.insert("commit_author".into(), tokens[2].into());
+    }
+    if let Some(msg) = message.strip_prefix("commit: ") {
+        meta.insert("commit_message".into(), msg.trim().into());
+    }
+    if message.starts_with("commit:") {
+        if let Some(hash) = meta.get("commit_hash").and_then(|v| v.as_str()) {
+            if let Some(root) = repo_root {
+                if let Some(stats) = git_commit_shortstat(root, hash) {
+                    meta.insert("diff_stats".into(), stats.into());
+                }
+            }
+        }
+    }
 }
 
 fn parse_head_pointer(path: &Path, content: &str) -> Option<CanonicalEvent> {

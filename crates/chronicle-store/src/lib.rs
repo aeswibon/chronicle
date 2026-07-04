@@ -119,8 +119,8 @@ impl Store {
             "SELECT id, timestamp, source, category, type, project, workspace, duration_ms, metadata
              FROM events WHERE timestamp >= ?1 AND timestamp <= ?2
              AND (
-               category IN ('\"os\"', '\"shell\"', '\"git\"')
-               OR type IN ('file.created', 'file.deleted')
+               category IN ('\"os\"', '\"shell\"', '\"git\"', '\"browser\"')
+               OR type IN ('file.created', 'file.deleted', 'file.moved')
              )
              AND type NOT IN ('git.other', 'file.modified')
              AND metadata NOT LIKE '%\"app_name\":\"chronicle-ui\"%'
@@ -326,8 +326,8 @@ impl Store {
             "SELECT id, timestamp, source, category, type, project, workspace, duration_ms, metadata
              FROM events WHERE project = ?1 AND timestamp >= ?2 AND timestamp <= ?3
              AND (
-               category IN ('\"os\"', '\"shell\"', '\"git\"')
-               OR type IN ('file.created', 'file.deleted')
+               category IN ('\"os\"', '\"shell\"', '\"git\"', '\"browser\"')
+               OR type IN ('file.created', 'file.deleted', 'file.moved')
              )
              AND type NOT IN ('git.other', 'file.modified')
              ORDER BY timestamp DESC LIMIT ?4",

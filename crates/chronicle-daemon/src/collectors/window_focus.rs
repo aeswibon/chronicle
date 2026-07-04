@@ -98,12 +98,14 @@ async fn handle_sample(
         &sample.bundle_id,
         sample.pid,
         sample.window_title.clone(),
+        sample.folder_path.clone(),
     );
     let Some(event) = emitter.sample_to_event(
         &sample.name,
         &sample.bundle_id,
         sample.pid,
         sample.window_title.clone(),
+        sample.folder_path.clone(),
         &sample.title_source,
         sample.timestamp_ms,
         None,

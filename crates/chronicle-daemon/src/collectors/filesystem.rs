@@ -1,5 +1,6 @@
 use chronicle_core::{CanonicalEvent, EventCategory};
-use notify::{EventKind, RecursiveMode, Watcher};
+use notify::event::{EventKind, ModifyKind};
+use notify::{RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -95,13 +96,20 @@ impl FilesystemCollector {
                     }
                 };
 
-                let event_type = match event.kind {
-                    EventKind::Create(_) => "file.created",
-                    EventKind::Remove(_) => "file.deleted",
-                    _ => continue,
+                let event_type = match filesystem_event_type(&event.kind) {
+                    Some(t) => t,
+                    None => continue,
                 };
 
-                for path in &event.paths {
+                let paths: Vec<&Path> = if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_)))
+                    && event.paths.len() == 2
+                {
+                    vec![event.paths[1].as_path()]
+                } else {
+                    event.paths.iter().map(|p| p.as_path()).collect()
+                };
+
+                for path in paths {
                     if should_ignore(path) {
                         continue;
                     }
@@ -133,6 +141,12 @@ impl FilesystemCollector {
                         meta.insert("extension".into(), ext.into());
                     }
                     meta.insert("path".into(), path.to_string_lossy().into());
+                    if event_type == "file.moved" && event.paths.len() == 2 {
+                        meta.insert(
+                            "previous_path".into(),
+                            event.paths[0].to_string_lossy().into(),
+                        );
+                    }
 
                     debug!("fs event: {} {}", event_type, path.display());
 
@@ -143,6 +157,15 @@ impl FilesystemCollector {
                 }
             }
         });
+    }
+}
+
+fn filesystem_event_type(kind: &EventKind) -> Option<&'static str> {
+    match kind {
+        EventKind::Create(_) => Some("file.created"),
+        EventKind::Remove(_) => Some("file.deleted"),
+        EventKind::Modify(ModifyKind::Name(_)) => Some("file.moved"),
+        _ => None,
     }
 }
 
@@ -172,4 +195,31 @@ fn should_ignore(path: &Path) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use notify::event::{EventKind, ModifyKind, RenameMode};
+
+    #[test]
+    fn ignores_non_source_extensions() {
+        assert!(should_ignore(Path::new("/Volumes/Seagate/developer/photo.png")));
+    }
+
+    #[test]
+    fn still_ignores_noise_extensions() {
+        assert!(should_ignore(Path::new("/Volumes/Seagate/developer/app.log")));
+    }
+
+    #[test]
+    fn allows_source_extensions() {
+        assert!(!should_ignore(Path::new("/Volumes/Seagate/developer/main.rs")));
+    }
+
+    #[test]
+    fn maps_rename_to_file_moved() {
+        let kind = EventKind::Modify(ModifyKind::Name(RenameMode::Both));
+        assert_eq!(filesystem_event_type(&kind), Some("file.moved"));
+    }
 }

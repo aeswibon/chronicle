@@ -148,6 +148,22 @@ pub fn default_store_path() -> PathBuf {
         .join(".chronicle/chronicle.db")
 }
 
+pub fn default_lock_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".chronicle/daemon.lock")
+}
+
+/// Expand a leading `~/` to the user home directory (clap defaults do not).
+pub fn expand_tilde(path: &str) -> PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    }
+    PathBuf::from(path)
+}
+
 pub fn load() -> ChronicleConfig {
     let path = config_path();
     if !path.exists() {

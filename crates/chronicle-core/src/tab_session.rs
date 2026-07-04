@@ -81,9 +81,20 @@ pub fn normalize_tab_title(title: &str) -> String {
 }
 
 /// Identity for a tab/window session: app + bundle + normalized title.
-pub fn tab_session_key(app_name: &str, bundle_id: &str, window_title: Option<&str>) -> String {
+pub fn tab_session_key(
+    app_name: &str,
+    bundle_id: &str,
+    window_title: Option<&str>,
+    folder_path: Option<&str>,
+) -> String {
     let app = app_name.to_lowercase();
     let bundle = bundle_id.to_lowercase();
+    if bundle.contains("com.apple.finder") {
+        if let Some(path) = folder_path.map(str::trim).filter(|p| !p.is_empty()) {
+            let path = path.trim_end_matches('/').to_string();
+            return format!("{app}|{bundle}|{path}");
+        }
+    }
     let tab = window_title
         .map(normalize_tab_title)
         .filter(|t| !t.is_empty())
@@ -110,8 +121,9 @@ impl TabSessionTracker {
         app_name: &str,
         bundle_id: &str,
         window_title: Option<&str>,
+        folder_path: Option<&str>,
     ) -> Option<TabSessionChange> {
-        let key = tab_session_key(app_name, bundle_id, window_title);
+        let key = tab_session_key(app_name, bundle_id, window_title, folder_path);
         if self.last_key.as_deref() == Some(key.as_str()) {
             return None;
         }
@@ -168,12 +180,14 @@ mod tests {
             "Ghostty",
             "com.mitchellh.ghostty",
             Some("Build UI Better - ⏳ Working .··"),
+            None,
         );
         assert!(a.is_some());
         let b = t.observe(
             "Ghostty",
             "com.mitchellh.ghostty",
             Some("Build UI Better - ⏳ Working ..."),
+            None,
         );
         assert!(b.is_none());
     }
@@ -181,12 +195,13 @@ mod tests {
     #[test]
     fn same_tab_despite_dirty_toggle() {
         let mut t = TabSessionTracker::default();
-        t.observe("Cursor", "com.todesktop.cursor", Some("lib.rs — chronicle"));
+        t.observe("Cursor", "com.todesktop.cursor", Some("lib.rs — chronicle"), None);
         assert!(t
             .observe(
                 "Cursor",
                 "com.todesktop.cursor",
-                Some("● lib.rs — chronicle")
+                Some("● lib.rs — chronicle"),
+                None,
             )
             .is_none());
     }
@@ -194,8 +209,8 @@ mod tests {
     #[test]
     fn new_tab_when_title_changes() {
         let mut t = TabSessionTracker::default();
-        t.observe("Cursor", "com.cursor", Some("chronicle — lib.rs"));
-        let next = t.observe("Cursor", "com.cursor", Some("other — main.rs"));
+        t.observe("Cursor", "com.cursor", Some("chronicle — lib.rs"), None);
+        let next = t.observe("Cursor", "com.cursor", Some("other — main.rs"), None);
         assert!(next.is_some());
         assert!(!next.unwrap().app_changed);
     }
@@ -207,11 +222,13 @@ mod tests {
             "Safari",
             "com.apple.Safari",
             Some("Rust Book - The Rust Programming Language"),
+            None,
         );
         let next = t.observe(
             "Safari",
             "com.apple.Safari",
             Some("Chronicle README - GitHub"),
+            None,
         );
         assert!(next.is_some());
         assert!(!next.unwrap().app_changed);
@@ -220,8 +237,26 @@ mod tests {
     #[test]
     fn finder_window_sessions() {
         let mut t = TabSessionTracker::default();
-        t.observe("Finder", "com.apple.finder", Some("developer"));
-        let next = t.observe("Finder", "com.apple.finder", Some("Downloads"));
+        t.observe("Finder", "com.apple.finder", Some("developer"), None);
+        let next = t.observe("Finder", "com.apple.finder", Some("Downloads"), None);
+        assert!(next.is_some());
+    }
+
+    #[test]
+    fn finder_distinguishes_same_title_different_paths() {
+        let mut t = TabSessionTracker::default();
+        t.observe(
+            "Finder",
+            "com.apple.finder",
+            Some("developer"),
+            Some("/Volumes/A/developer"),
+        );
+        let next = t.observe(
+            "Finder",
+            "com.apple.finder",
+            Some("developer"),
+            Some("/Volumes/B/developer"),
+        );
         assert!(next.is_some());
     }
 }

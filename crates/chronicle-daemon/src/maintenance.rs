@@ -46,7 +46,7 @@ pub async fn summarize_and_persist_day(
             .query_spans(since, Some(until), 200)
             .map_err(|e| format!("spans query failed: {e}"))?;
         let events = guard
-            .query_activity_events(since, Some(until), 250)
+            .query_events(since, Some(until), 1000)
             .map_err(|e| format!("events query failed: {e}"))?;
         (spans, events)
     };

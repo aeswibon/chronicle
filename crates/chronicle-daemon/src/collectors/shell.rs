@@ -17,6 +17,12 @@ struct ShellCommand {
     exit_code: i32,
     dur: u64,
     cwd: String,
+    #[serde(default)]
+    shell: Option<String>,
+    #[serde(default)]
+    tty: Option<String>,
+    #[serde(default)]
+    ppid: Option<u32>,
 }
 
 impl ShellHookCollector {
@@ -71,6 +77,15 @@ impl ShellHookCollector {
 
                             let meta = event.metadata.as_object_mut().unwrap();
                             meta.insert("command".into(), cmd.cmd.into());
+                            if let Some(shell) = cmd.shell {
+                                meta.insert("shell_name".into(), shell.into());
+                            }
+                            if let Some(tty) = cmd.tty.filter(|t| !t.is_empty()) {
+                                meta.insert("tty".into(), tty.into());
+                            }
+                            if let Some(ppid) = cmd.ppid {
+                                meta.insert("ppid".into(), ppid.into());
+                            }
                             meta.insert("exit_code".into(), cmd.exit_code.to_string().into());
                             meta.insert("cwd".into(), cmd.cwd.clone().into());
                             if let Some((_, root)) =

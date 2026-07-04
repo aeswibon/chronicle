@@ -12,6 +12,7 @@
     formatDateTime,
     formatDuration,
     formatTime,
+    spanTypeLabel,
   } from '$lib/format.js';
 
   let spanId = $derived($page.params.id ?? '');
@@ -34,7 +35,7 @@
 </script>
 
 <PageShell
-  title={span ? `${span.span_type} session` : 'Session'}
+  title={span ? `${spanTypeLabel(span)} session` : 'Session'}
   description={span ? formatDateTime(span.started_at) : 'Session detail'}
 >
   <div class="mb-6">
@@ -61,7 +62,7 @@
   {:else if span}
     <div class="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-5 py-4 mb-8">
       <div class="flex flex-wrap items-center gap-4 text-sm">
-        <span class="font-medium text-[var(--text)] capitalize">{span.span_type}</span>
+        <span class="font-medium text-[var(--text)]">{spanTypeLabel(span)}</span>
         <span class="text-[var(--text-muted)]">{formatDuration(span.duration_ms)}</span>
         <span class="text-[var(--text-muted)]">{span.event_count} events</span>
         {#if span.project}

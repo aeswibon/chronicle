@@ -9,8 +9,103 @@ pub struct SpanProcessor {
     active: Option<ActiveSpan>,
 }
 
+const WORK_SIGNAL_CAP: usize = 8;
+
+#[derive(Default, Clone)]
+struct WorkSignals {
+    commands: Vec<String>,
+    git_events: Vec<String>,
+    file_events: Vec<String>,
+}
+
+impl WorkSignals {
+    fn absorb(&mut self, event: &CanonicalEvent) {
+        match event.category {
+            EventCategory::Shell => {
+                if let Some(cmd) = event.metadata.get("command").and_then(|v| v.as_str()) {
+                    push_unique(&mut self.commands, truncate(cmd, 96), WORK_SIGNAL_CAP);
+                }
+            }
+            EventCategory::Git => {
+                let line = event
+                    .metadata
+                    .get("commit_message")
+                    .or_else(|| event.metadata.get("reflog"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&event.r#type);
+                push_unique(&mut self.git_events, truncate(line, 96), WORK_SIGNAL_CAP);
+            }
+            EventCategory::Filesystem => {
+                if let Some(p) = event.metadata.get("path").and_then(|v| v.as_str()) {
+                    let label = format!("{} {}", event.r#type, p);
+                    push_unique(&mut self.file_events, truncate(&label, 96), WORK_SIGNAL_CAP);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn attach(&self, obj: &mut serde_json::Map<String, serde_json::Value>) {
+        if !self.commands.is_empty() {
+            obj.insert("recent_commands".into(), serde_json::json!(self.commands));
+        }
+        if !self.git_events.is_empty() {
+            obj.insert("recent_git".into(), serde_json::json!(self.git_events));
+        }
+        if !self.file_events.is_empty() {
+            obj.insert("recent_files".into(), serde_json::json!(self.file_events));
+        }
+    }
+}
+
+fn push_unique(list: &mut Vec<String>, value: String, cap: usize) {
+    if value.is_empty() {
+        return;
+    }
+    if let Some(pos) = list.iter().position(|v| v == &value) {
+        list.remove(pos);
+    }
+    list.push(value);
+    if list.len() > cap {
+        let drop = list.len() - cap;
+        list.drain(0..drop);
+    }
+}
+
+fn truncate(value: &str, max: usize) -> String {
+    if value.len() <= max {
+        value.to_string()
+    } else {
+        format!("{}…", &value[..max.saturating_sub(1)])
+    }
+}
+
+fn is_work_signal(event: &CanonicalEvent) -> bool {
+    matches!(
+        event.category,
+        EventCategory::Shell | EventCategory::Git | EventCategory::Filesystem
+    )
+}
+
+fn absorbs_into_active_span(active: &ActiveSpan, event: &CanonicalEvent) -> bool {
+    if !matches!(
+        active.span_type,
+        SpanType::Terminal | SpanType::AiAssistant
+    ) || !is_work_signal(event)
+    {
+        return false;
+    }
+    match (&active.project, &event.project) {
+        (None, _) => true,
+        (Some(active_p), Some(event_p)) => active_p == event_p,
+        (Some(_), None) => true,
+    }
+}
+
 struct ActiveSpan {
     tab_session_key: Option<String>,
+    app_name: Option<String>,
+    tab_title: Option<String>,
     id: uuid::Uuid,
     trace_id: uuid::Uuid,
     span_type: SpanType,
@@ -18,6 +113,7 @@ struct ActiveSpan {
     last_event_ts: i64,
     event_count: u32,
     project: Option<String>,
+    work_signals: WorkSignals,
 }
 
 impl SpanProcessor {
@@ -26,6 +122,18 @@ impl SpanProcessor {
     }
 
     pub fn process(&mut self, event: &CanonicalEvent) -> Option<Span> {
+        if let Some(active) = self.active.as_mut() {
+            if absorbs_into_active_span(active, event) {
+                active.absorb_work_signal(event);
+                active.last_event_ts = event.timestamp;
+                active.event_count += 1;
+                if active.project.is_none() {
+                    active.project = event.project.clone();
+                }
+                return None;
+            }
+        }
+
         let project = event.project.clone();
         let span_type = category_to_span_type(&event.category, event);
         let mut closed_span = None;
@@ -41,24 +149,21 @@ impl SpanProcessor {
                 || tab_changed
             {
                 closed_span = Some(active.clone().into_closed_span(event.timestamp));
-                self.active = Some(ActiveSpan::new(
-                    event.timestamp,
-                    span_type,
-                    project,
-                    tab_session_key(event),
-                ));
+                let mut next =
+                    ActiveSpan::new(event.timestamp, span_type, project, tab_session_key(event));
+                next.absorb_display_meta(event);
+                self.active = Some(next);
             } else {
                 let active = self.active.as_mut().unwrap();
                 active.last_event_ts = event.timestamp;
                 active.event_count += 1;
+                active.absorb_display_meta(event);
             }
         } else {
-            self.active = Some(ActiveSpan::new(
-                event.timestamp,
-                span_type,
-                project,
-                tab_session_key(event),
-            ));
+            let mut next =
+                ActiveSpan::new(event.timestamp, span_type, project, tab_session_key(event));
+            next.absorb_display_meta(event);
+            self.active = Some(next);
         }
 
         closed_span
@@ -92,6 +197,8 @@ impl ActiveSpan {
     ) -> Self {
         Self {
             tab_session_key,
+            app_name: None,
+            tab_title: None,
             id: uuid::Uuid::new_v4(),
             trace_id: uuid::Uuid::new_v4(),
             span_type,
@@ -99,6 +206,7 @@ impl ActiveSpan {
             last_event_ts: timestamp,
             event_count: 1,
             project,
+            work_signals: WorkSignals::default(),
         }
     }
 
@@ -118,8 +226,56 @@ impl ActiveSpan {
             if let Some(ref key) = self.tab_session_key {
                 obj.insert("tab_session_key".into(), key.clone().into());
             }
+            if let Some(ref app) = self.app_name {
+                obj.insert("app_name".into(), app.clone().into());
+            }
+            if let Some(ref title) = self.tab_title {
+                obj.insert("tab_title".into(), title.clone().into());
+            }
+            self.work_signals.attach(obj);
         }
         span
+    }
+
+    fn absorb_work_signal(&mut self, event: &CanonicalEvent) {
+        self.work_signals.absorb(event);
+    }
+
+    fn absorb_display_meta(&mut self, event: &CanonicalEvent) {
+        if event.category == EventCategory::Browser {
+            let Some(meta) = event.metadata.as_object() else {
+                return;
+            };
+            if let Some(domain) = meta.get("domain").and_then(|v| v.as_str()) {
+                self.app_name = Some(domain.to_string());
+            }
+            if let Some(title) = meta.get("title").and_then(|v| v.as_str()) {
+                let title = chronicle_core::tab_session::normalize_tab_title(title);
+                if !title.is_empty() {
+                    self.tab_title = Some(title);
+                }
+            }
+            return;
+        }
+        if event.category != EventCategory::Os {
+            return;
+        }
+        let Some(meta) = event.metadata.as_object() else {
+            return;
+        };
+        if let Some(app) = meta.get("app_name").and_then(|v| v.as_str()) {
+            self.app_name = Some(app.to_string());
+        }
+        let app = self.app_name.as_deref().unwrap_or(&event.source);
+        let title = meta
+            .get("tab_title")
+            .or_else(|| meta.get("window_title"))
+            .and_then(|v| v.as_str())
+            .map(chronicle_core::tab_session::normalize_tab_title)
+            .filter(|t| !t.is_empty() && t.to_lowercase() != app.to_lowercase());
+        if let Some(title) = title {
+            self.tab_title = Some(title);
+        }
     }
 
     fn into_closed_span(self, ended_at: i64) -> Span {
@@ -141,6 +297,9 @@ impl Clone for ActiveSpan {
             event_count: self.event_count,
             project: self.project.clone(),
             tab_session_key: self.tab_session_key.clone(),
+            app_name: self.app_name.clone(),
+            tab_title: self.tab_title.clone(),
+            work_signals: self.work_signals.clone(),
         }
     }
 }
@@ -153,6 +312,20 @@ fn tab_session_key(event: &CanonicalEvent) -> Option<String> {
         .filter(|s| !s.is_empty())
     {
         return Some(key.to_string());
+    }
+    if event.category == EventCategory::Browser {
+        let meta = event.metadata.as_object()?;
+        let domain = meta
+            .get("domain")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let title = meta
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(chronicle_core::tab_session::normalize_tab_title)
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| domain.to_string());
+        return Some(format!("browser|{domain}|{title}"));
     }
     if event.category != EventCategory::Os || event.r#type != "process.focus" {
         return None;
@@ -167,8 +340,12 @@ fn tab_session_key(event: &CanonicalEvent) -> Option<String> {
         .get("window_title")
         .or_else(|| meta.get("tab_title"))
         .and_then(|v| v.as_str());
+    let folder_path = meta.get("folder_path").and_then(|v| v.as_str());
     Some(chronicle_core::tab_session::tab_session_key(
-        app, bundle, title,
+        app,
+        bundle,
+        title,
+        folder_path,
     ))
 }
 
@@ -276,4 +453,31 @@ mod tests {
         assert_eq!(p.active_spans().len(), 1);
         assert_eq!(p.active_spans()[0].project.as_deref(), Some("other"));
     }
+    #[test]
+    fn absorbs_shell_into_terminal_span() {
+        let mut p = SpanProcessor::new();
+        let mut focus = CanonicalEvent::new("Ghostty", EventCategory::Os, "process.focus");
+        focus.metadata = serde_json::json!({"app_name": "Ghostty"});
+        focus.timestamp = 1_000;
+        p.process(&focus);
+
+        let mut shell = CanonicalEvent::new("cargo", EventCategory::Shell, "command.completed");
+        shell.project = Some("chronicle".into());
+        shell.metadata = serde_json::json!({"command": "cargo test -p chronicle-daemon"});
+        shell.timestamp = 2_000;
+        assert!(p.process(&shell).is_none());
+
+        let active = p.active_spans();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].span_type, SpanType::Terminal);
+        assert_eq!(active[0].project.as_deref(), Some("chronicle"));
+        let cmds = active[0]
+            .metadata
+            .get("recent_commands")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert_eq!(cmds.len(), 1);
+        assert!(cmds[0].as_str().unwrap().contains("cargo test"));
+    }
+
 }

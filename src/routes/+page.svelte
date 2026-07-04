@@ -44,9 +44,11 @@
   }
 
   let feed = $derived(
-    collapseTimelineEvents(events.filter((e) => isInterestingActivity(e))),
+    collapseTimelineEvents(events).filter(
+      (item) => isInterestingActivity(item.event) || item.count > 1,
+    ),
   );
-  let listableSpans = $derived(spans.filter((s) => isListableSpan(s)));
+  let activeSpans = $derived(spans.filter((s) => isListableSpan(s)));
 
   onMount(() => {
     loadSpans();
@@ -71,7 +73,9 @@
 
 <PageShell
   title="Timeline"
-  description={status ? `${status.events_count} events recorded · v${status.version}` : 'Your recent activity and sessions.'}
+  description={status
+    ? `${status.events_count} events recorded · v${status.app_version ?? status.version}${status.version && status.app_version && status.version !== status.app_version ? ` (daemon v${status.version})` : ''}`
+    : 'Your recent activity and sessions.'}
 >
   {#if error}
     <div class="text-center py-20 rounded-xl border border-dashed border-[var(--border)]">
@@ -82,30 +86,40 @@
     </div>
   {:else}
     <section class="mb-10">
-      <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-4">Sessions</h3>
-      {#if listableSpans.length > 0}
+      <div class="mb-4">
+        <h3 class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">Active session</h3>
+        <p class="text-xs text-[var(--text-muted)] mt-1">What you are focused on right now — not past sessions.</p>
+      </div>
+      {#if activeSpans.length > 0}
         <div class="space-y-2">
-          {#each listableSpans as span}
+          {#each activeSpans as span}
             <a
               href="/sessions/{span.id}"
               class="block bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl px-4 py-3.5 hover:border-[var(--accent)]/30 transition-colors"
             >
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2.5">
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2.5 min-w-0">
                   <span
                     class="w-1.5 h-1.5 rounded-full shrink-0"
                     class:bg-[var(--accent)]={isSpanActive(span)}
                     class:bg-[var(--text-muted)]={!isSpanActive(span)}
                   ></span>
-                  <span class="text-sm font-medium text-[var(--text)]">{spanAppName(span) || spanTypeLabel(span.span_type)}</span>
+                  <span class="text-sm font-medium text-[var(--text)] truncate">{spanAppName(span) || spanTypeLabel(span)}</span>
+                  <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide bg-[var(--bg-muted)] text-[var(--text-muted)] shrink-0">
+                    {spanTypeLabel(span)}
+                  </span>
                   {#each spanActivityLabels(span) as label}
-                    <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--accent-muted)] text-[var(--accent)]">{label}</span>
+                    {#if label.toLowerCase() !== spanTypeLabel(span).toLowerCase()}
+                      <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--accent-muted)] text-[var(--accent)]">{label}</span>
+                    {/if}
                   {/each}
-                  {#if span.duration_ms}
-                    <span class="text-xs text-[var(--text-muted)]">{formatDuration(span.duration_ms)}</span>
-                  {/if}
                 </div>
-                <span class="text-xs text-[var(--text-muted)] tabular-nums">{formatTime(span.started_at)}</span>
+                <div class="text-right shrink-0">
+                  {#if span.duration_ms}
+                    <span class="text-xs text-[var(--text-muted)] tabular-nums">{formatDuration(span.duration_ms)}</span>
+                  {/if}
+                  <p class="text-xs text-[var(--text-muted)] tabular-nums mt-0.5">{formatTime(span.started_at)}</p>
+                </div>
               </div>
               {#if span.project}
                 <p class="text-xs text-[var(--text-muted)] mt-2 ml-4">{span.project}</p>
@@ -115,7 +129,7 @@
         </div>
       {:else}
         <p class="text-sm text-[var(--text-muted)] py-4 px-4 rounded-xl border border-dashed border-[var(--border)]">
-          No active sessions — focus an agent IDE, terminal, or editor to start one.
+          No active session — focus an IDE, terminal, or browser tab to start one.
         </p>
       {/if}
     </section>
@@ -153,7 +167,7 @@
                         </span>
                       {/if}
                     </div>
-                    <p class="text-xs text-[var(--text-muted)] mt-1 truncate">{eventSubtitle(item.event)}</p>
+                    <p class="text-xs text-[var(--text-muted)] mt-1 truncate">{eventSubtitle(item.event, item)}</p>
                   </div>
                   <span class="text-xs text-[var(--text-muted)] shrink-0 tabular-nums">{formatTime(item.latest)}</span>
                 </div>

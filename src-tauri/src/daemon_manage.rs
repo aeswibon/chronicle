@@ -10,6 +10,10 @@ pub fn default_socket_string() -> String {
         .into_owned()
 }
 
+pub fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
 pub fn resolve_daemon_binary() -> Option<PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -17,6 +21,17 @@ pub fn resolve_daemon_binary() -> Option<PathBuf> {
                 let candidate = dir.join(name);
                 if candidate.is_file() {
                     return Some(candidate);
+                }
+            }
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with("chronicle-daemon")
+                        && !name.contains("focus-monitor")
+                        && entry.path().is_file()
+                    {
+                        return Some(entry.path());
+                    }
                 }
             }
         }
@@ -52,35 +67,55 @@ pub fn resolve_daemon_binary() -> Option<PathBuf> {
 }
 
 pub fn daemon_reachable(socket: &str) -> bool {
+    daemon_version(socket).is_some()
+}
+
+pub fn daemon_version(socket: &str) -> Option<String> {
     std::thread::spawn({
         let socket = socket.to_string();
         move || {
             let rt = tokio::runtime::Runtime::new().ok()?;
             rt.block_on(async {
-                chronicle_ipc::Client::connect(&socket)
-                    .await
-                    .ok()?
+                let mut client = chronicle_ipc::Client::connect(&socket).await.ok()?;
+                match client
                     .request(chronicle_ipc::DaemonRequest::GetStatus)
                     .await
-                    .ok()
+                    .ok()?
+                {
+                    chronicle_ipc::DaemonResponse::Status { version, .. } => Some(version),
+                    _ => None,
+                }
             })
         }
     })
     .join()
     .ok()
     .flatten()
-    .is_some()
+}
+
+fn daemon_needs_upgrade(binary: &Path, socket: &str) -> bool {
+    if needs_plist_install(binary) {
+        return true;
+    }
+    daemon_version(socket)
+        .is_some_and(|version| version != app_version())
 }
 
 /// Install the user LaunchAgent and start the daemon. No administrator password required.
 pub fn ensure_daemon_running() -> Result<(), String> {
     let socket = default_socket_string();
+    let binary = resolve_daemon_binary()
+        .ok_or_else(|| "Chronicle daemon binary not found. Reinstall the app.".to_string())?;
+
+    if daemon_reachable(&socket) && daemon_needs_upgrade(&binary, &socket) {
+        return start_daemon_from_binary(&binary, &socket);
+    }
+
     if daemon_reachable(&socket) {
         return Ok(());
     }
 
-    let binary = resolve_daemon_binary()
-        .ok_or_else(|| "Chronicle daemon binary not found. Reinstall the app.".to_string())?;
+    stop_existing_daemon();
 
     // Dev builds: avoid launchd (KeepAlive fights the singleton lock). Spawn once in user space.
     if cfg!(debug_assertions) {
@@ -118,39 +153,38 @@ pub fn ensure_daemon_running() -> Result<(), String> {
     Err("Chronicle could not start the background service. Check Settings → Restart daemon.".into())
 }
 
-pub fn restart_daemon() -> Result<(), String> {
-    let binary = resolve_daemon_binary();
-    let socket = default_socket_string();
+fn start_daemon_from_binary(binary: &Path, socket: &str) -> Result<(), String> {
+    stop_existing_daemon();
 
     if cfg!(debug_assertions) {
-        unload_launch_agent();
-        if let Some(ref path) = binary {
-            spawn_detached_daemon(path, &socket)?;
-            if wait_for_daemon(&socket, 8) {
-                return Ok(());
-            }
+        spawn_detached_daemon(binary, socket)?;
+        if wait_for_daemon(socket, 12) {
+            return Ok(());
         }
-        return Err("Could not restart the Chronicle daemon.".into());
+        return Err("Chronicle could not restart the background service.".into());
     }
 
-    if let Some(ref path) = binary {
-        if needs_plist_install(path) {
-            let _ = run_daemon_install(path);
-        }
-    }
+    run_daemon_install(binary)?;
+    activate_launch_agent()?;
 
-    if kickstart_launch_agent() && wait_for_daemon(&socket, 8) {
+    if kickstart_launch_agent() && wait_for_daemon(socket, 12) {
         return Ok(());
     }
 
-    if let Some(path) = binary {
-        spawn_detached_daemon(&path, &socket)?;
-        if wait_for_daemon(&socket, 8) {
-            return Ok(());
-        }
+    spawn_detached_daemon(binary, socket)?;
+    if wait_for_daemon(socket, 12) {
+        return Ok(());
     }
 
-    Err("Could not restart the Chronicle daemon.".into())
+    Err("Chronicle could not restart the background service after upgrade.".into())
+}
+
+pub fn restart_daemon() -> Result<(), String> {
+    let binary = resolve_daemon_binary().ok_or_else(|| {
+        "Chronicle daemon binary not found. Reinstall the app.".to_string()
+    })?;
+    let socket = default_socket_string();
+    start_daemon_from_binary(&binary, &socket)
 }
 
 fn launch_agent_plist_path() -> Option<PathBuf> {
@@ -323,4 +357,57 @@ fn wait_for_daemon(socket: &str, attempts: u32) -> bool {
         std::thread::sleep(Duration::from_millis(500));
     }
     false
+}
+
+/// Stop any running daemon (LaunchAgent, lock PID, or stale dev spawns) before restart.
+fn stop_existing_daemon() {
+    unload_launch_agent();
+
+    let lock_path = chronicle_config::default_lock_path();
+    if let Ok(content) = std::fs::read_to_string(&lock_path) {
+        if let Ok(pid) = content.trim().parse::<i32>() {
+            signal_pid(pid, "TERM");
+            for _ in 0..30 {
+                if !pid_running(pid) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if pid_running(pid) {
+                signal_pid(pid, "KILL");
+            }
+        }
+    }
+
+    let _ = Command::new("pkill")
+        .args(["-f", "chronicle-daemon start --socket"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    std::thread::sleep(Duration::from_millis(400));
+
+    let socket = default_socket_string();
+    if !daemon_reachable(&socket) {
+        let _ = std::fs::remove_file(&socket);
+        let _ = std::fs::remove_file(lock_path);
+    }
+}
+
+fn pid_running(pid: i32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn signal_pid(pid: i32, sig: &str) {
+    let _ = Command::new("kill")
+        .args(["-s", sig, &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }

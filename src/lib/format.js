@@ -84,17 +84,65 @@ export function isListableSpan(span) {
 }
 
 /** Human-readable span type for session chips. */
-export function spanTypeLabel(spanType) {
+/** @param {string | { span_type?: string, metadata?: Record<string, unknown> }} spanOrType */
+export function spanTypeLabel(spanOrType, metadata = null) {
+  const spanType =
+    typeof spanOrType === 'object' && spanOrType !== null
+      ? spanOrType.span_type
+      : spanOrType;
+  const meta =
+    typeof spanOrType === 'object' && spanOrType !== null
+      ? spanOrType.metadata ?? null
+      : metadata;
+  const type = String(spanType ?? '').toLowerCase();
+  if (type === 'documentation' && meta && typeof meta === 'object') {
+    const activityLabels = Array.isArray(meta.activity_labels)
+      ? meta.activity_labels.map((label) => String(label).toLowerCase())
+      : [];
+    const app = String(meta.app_name ?? meta.bundle_id ?? '').toLowerCase();
+    if (app.includes('finder')) return 'Files';
+    if (
+      ['safari', 'chrome', 'firefox', 'arc', 'brave', 'edge', 'opera', 'vivaldi'].some((b) =>
+        app.includes(b),
+      )
+    ) {
+      return 'Browser';
+    }
+    if (activityLabels.includes('files')) return 'Files';
+    if (activityLabels.includes('browsing')) return 'Browser';
+    if (activityLabels.includes('coding')) return 'IDE';
+    if (activityLabels.includes('terminal')) return 'Terminal';
+    if (activityLabels.includes('agent session')) return 'Agent';
+  }
   return String(spanType ?? '')
     .replaceAll('_', ' ')
-    .replace(/\w/g, (c) => c.toUpperCase());
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/** Daily rollup rows worth showing (skip empty or no-activity stubs). */
+/** Detect summaries that leaked model chain-of-thought. */
+export function summaryLooksLikeReasoning(text) {
+  if (!text?.trim()) return false;
+  const lower = text.toLowerCase();
+  const markers = [
+    'let me think',
+    'to answer this',
+    'let me check',
+    "here's my attempt",
+    'however, i need to rephrase',
+    'carefully review',
+    'extract the essential',
+    'provided developer summary',
+  ];
+  if (markers.some((m) => lower.includes(m))) return true;
+  const hits = markers.filter((m) => lower.includes(m)).length;
+  return hits >= 2 || (hits >= 1 && text.length > 160);
+}
+
+/** Daily rollup rows worth showing (skip empty summaries and model reasoning leaks). */
 export function isListableSummary(session) {
   const text = (session.summary ?? '').trim();
   if (!text) return false;
-  if (/no meaningful activity/i.test(text)) return false;
+  if (summaryLooksLikeReasoning(text)) return false;
   return true;
 }
 
@@ -164,20 +212,30 @@ function normalizeDisplayTitle(title) {
   return t.trim();
 }
 
+/** True when a focus event has a real window/tab title (not just the app name). */
+export function hasMeaningfulTabTitle(event) {
+  const meta = /** @type {Record<string, string>} */ (event.metadata ?? {});
+  const app = (meta.app_name || /** @type {string} */ (event.source) || '').trim();
+  const tab = normalizeDisplayTitle(meta.tab_title?.trim() || meta.window_title?.trim() || '');
+  if (!tab) return false;
+  if (tab.toLowerCase() === app.toLowerCase()) return false;
+  if (tab === '_default') return false;
+  return true;
+}
+
 /** Hide generic app-switch noise in the live feed. */
 export function isInterestingActivity(event) {
   const category = event.category;
   const type = /** @type {string} */ (event.type ?? '');
+  if (category === 'shell' || category === 'git' || category === 'filesystem' || category === 'ide' || category === 'build' || category === 'ai') {
+    return true;
+  }
   if (category !== 'os') return true;
   if (type === 'window.focus') return false;
   if (type === 'process.focus') {
-    const meta = /** @type {Record<string, string>} */ (event.metadata ?? {});
-    if (meta.tab_session_key) return true;
-    if (activityLabel(event)) return true;
-    return false;
+    return hasMeaningfulTabTitle(event);
   }
-  if (activityLabel(event)) return true;
-  return false;
+  return activityLabel(event) != null;
 }
 
 /** Category chip for timeline rows — never "Focus". */
@@ -197,7 +255,12 @@ export function activityLabel(event) {
 export function spanActivityLabels(span) {
   const meta = /** @type {Record<string, string[]>} */ (span.metadata ?? {});
   const labels = meta.activity_labels;
-  return Array.isArray(labels) ? labels : [];
+  if (!Array.isArray(labels)) return [];
+  return labels.map((label) =>
+    String(label)
+      .replaceAll('_', ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase()),
+  );
 }
 
 /** @param {Record<string, unknown>} event */
@@ -208,6 +271,12 @@ export function eventLabel(event) {
 
   if (category === 'os' && (type === 'process.focus' || type === 'window.focus')) {
     return osDisplayLabel(event);
+  }
+  if (category === 'browser') {
+    const domain = meta.domain?.trim() || 'page';
+    const title = normalizeDisplayTitle(meta.title?.trim() || '');
+    if (title) return truncate(`${domain} — ${title}`, 72);
+    return domain;
   }
   if (meta.report_line) {
     const line = meta.report_line.replace(/^Focused\s+/i, '').replace(/^Switched to\s+/i, '');
@@ -224,17 +293,30 @@ export function eventLabel(event) {
   return humanizeType(type) || 'activity';
 }
 
-/** @param {Record<string, unknown>} event */
-export function eventSubtitle(event) {
+/** @param {Record<string, unknown>} event @param {{ count?: number, earliest?: number, latest?: number }} [group] */
+export function eventSubtitle(event, group) {
   const meta = /** @type {Record<string, string>} */ (event.metadata ?? {});
   const category = event.category;
   const type = /** @type {string} */ (event.type ?? '');
   const parts = [];
 
+  if (group && group.count > 1 && group.earliest != null && group.latest != null) {
+    parts.push(`${formatTime(group.earliest)}–${formatTime(group.latest)}`);
+    const visitWord =
+      event.category === 'browser' || (event.category === 'os' && hasMeaningfulTabTitle(event))
+        ? 'visits'
+        : 'switches';
+    parts.push(`${group.count} ${visitWord}`);
+  }
+
   if (category === 'os' && (type === 'process.focus' || type === 'window.focus')) {
-    if (meta.window_title) parts.push(truncate(meta.window_title, 80));
-    else if (type === 'window.focus') parts.push('window changed');
-    else parts.push(meta.app_name || 'app switch');
+    if (hasMeaningfulTabTitle(event) && meta.window_title) {
+      parts.push(truncate(meta.window_title, 80));
+    } else if (type === 'window.focus') {
+      parts.push('window changed');
+    } else if (!group || group.count <= 1) {
+      parts.push(meta.app_name || 'app switch');
+    }
   } else if (category === 'filesystem' && meta.path) {
     parts.push(truncate(meta.path, 80));
   } else if (category === 'shell' && meta.cwd) {
@@ -310,34 +392,81 @@ export function eventIconChar(event) {
 }
 
 /** @param {Record<string, unknown>} event */
-function eventIdentity(event) {
+function collapseIdentity(event) {
+  if (event.category === 'browser') {
+    const meta = /** @type {Record<string, string>} */ (event.metadata ?? {});
+    const domain = meta.domain?.trim() || '';
+    const title = normalizeDisplayTitle(meta.title?.trim() || '');
+    return `browser:page.focus:${domain}:${title}`;
+  }
+  if (event.category === 'os' && !hasMeaningfulTabTitle(event)) {
+    const meta = /** @type {Record<string, string>} */ (event.metadata ?? {});
+    const app = meta.app_name || /** @type {string} */ (event.source) || 'App';
+    const act = activityLabel(event) || 'app';
+    return `os:generic:${app}:${act}`;
+  }
   return `${event.category}:${event.type}:${eventLabel(event)}`;
 }
 
+/** @param {Record<string, unknown>} event */
+function shouldGlobalVisitCollapse(event) {
+  return event.category === 'browser' || (event.category === 'os' && hasMeaningfulTabTitle(event));
+}
+
+const VISIT_COLLAPSE_MS = 2 * 60 * 60 * 1000;
+
 /**
- * Collapse consecutive duplicate events in the live feed.
+ * Collapse duplicate events in the live feed (global revisit merge for browser/tab focus).
  * @param {Array<Record<string, unknown> & { timestamp: number }>} events
  */
 export function collapseTimelineEvents(events) {
-  /** @type {Array<{ event: typeof events[number], count: number, latest: number }>} */
+  /** @type {Map<string, number>} */
+  const globalIndex = new Map();
+  /** @type {Array<{ event: typeof events[number], count: number, latest: number, earliest: number }>} */
   const collapsed = [];
 
   for (const event of events) {
-    const identity = eventIdentity(event);
+    const identity = collapseIdentity(event);
+    const globalMerge = shouldGlobalVisitCollapse(event);
+    const windowMs = globalMerge
+      ? VISIT_COLLAPSE_MS
+      : hasMeaningfulTabTitle(event)
+        ? 30_000
+        : 30 * 60_000;
+
+    if (globalMerge) {
+      const idx = globalIndex.get(identity);
+      if (idx !== undefined) {
+        const prev = collapsed[idx];
+        if (prev.latest - event.timestamp < windowMs) {
+          prev.count += 1;
+          prev.earliest = Math.min(prev.earliest, event.timestamp);
+          prev.latest = Math.max(prev.latest, event.timestamp);
+          continue;
+        }
+      }
+      const entry = { event, count: 1, latest: event.timestamp, earliest: event.timestamp };
+      globalIndex.set(identity, collapsed.length);
+      collapsed.push(entry);
+      continue;
+    }
+
     const prev = collapsed[collapsed.length - 1];
     if (
       prev &&
-      eventIdentity(prev.event) === identity &&
-      prev.latest - event.timestamp < 30_000
+      !shouldGlobalVisitCollapse(prev.event) &&
+      collapseIdentity(prev.event) === identity &&
+      prev.latest - event.timestamp < windowMs
     ) {
       prev.count += 1;
+      prev.earliest = Math.min(prev.earliest, event.timestamp);
       prev.latest = Math.max(prev.latest, event.timestamp);
       continue;
     }
-    collapsed.push({ event, count: 1, latest: event.timestamp });
+    collapsed.push({ event, count: 1, latest: event.timestamp, earliest: event.timestamp });
   }
 
-  return collapsed;
+  return collapsed.sort((a, b) => b.latest - a.latest);
 }
 
 export function highlightMatch(text, query) {
@@ -350,5 +479,10 @@ export function highlightMatch(text, query) {
 /** App label from span metadata (live focus session). */
 export function spanAppName(span) {
   const meta = /** @type {Record<string, string>} */ (span.metadata ?? {});
-  return meta.app_name || null;
+  const app = meta.app_name?.trim();
+  const tab = meta.tab_title?.trim();
+  if (app && tab && tab.toLowerCase() !== app.toLowerCase()) {
+    return truncate(`${app} — ${tab}`, 72);
+  }
+  return app || null;
 }

@@ -1,3 +1,4 @@
+pub mod shell_noise;
 pub mod tab_session;
 
 use serde::{Deserialize, Serialize};

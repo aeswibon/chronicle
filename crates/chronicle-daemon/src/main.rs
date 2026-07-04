@@ -37,11 +37,25 @@ async fn main() -> anyhow::Result<()> {
             store,
             watch,
         } => {
+            let socket = config::expand_tilde(&socket)
+                .to_string_lossy()
+                .into_owned();
+            let store = shellexpand::tilde(&store).to_string();
             let daemon = daemon::Daemon::new(socket, store, watch);
             daemon.run().await
         }
-        Commands::Stop { socket } => stop_daemon(&socket).await,
-        Commands::Status { socket } => check_status(&socket).await,
+        Commands::Stop { socket } => {
+            let socket = config::expand_tilde(&socket)
+                .to_string_lossy()
+                .into_owned();
+            stop_daemon(&socket).await
+        }
+        Commands::Status { socket } => {
+            let socket = config::expand_tilde(&socket)
+                .to_string_lossy()
+                .into_owned();
+            check_status(&socket).await
+        }
         Commands::Install { watch } => install_launchd(&watch).await,
         Commands::Uninstall => uninstall_launchd().await,
         Commands::Hook { shell } => hook_install::install_and_print(shell.as_deref()),

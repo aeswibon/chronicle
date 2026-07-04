@@ -9,6 +9,7 @@ struct FocusPayload: Codable {
     let bundle_id: String
     let pid: Int32
     let window_title: String?
+    let folder_path: String?
     let title_source: String
     let timestamp_ms: Int64
     let accessibility_trusted: Bool
@@ -68,6 +69,29 @@ private func axWindowTitle(pid: Int32) -> String? {
     return trimmed.isEmpty ? nil : trimmed
 }
 
+
+private func axFolderPath(pid: Int32, bundleId: String) -> String? {
+    guard bundleId.lowercased().contains("com.apple.finder") else { return nil }
+    guard axTrusted() else { return nil }
+    let appEl = AXUIElementCreateApplication(pid)
+    var focused: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(appEl, kAXFocusedWindowAttribute as CFString, &focused) == .success,
+          let windowEl = focused
+    else { return nil }
+    var doc: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(windowEl as! AXUIElement, kAXDocumentAttribute as CFString, &doc) == .success
+    else { return nil }
+    if let urlStr = doc as? String {
+        if let url = URL(string: urlStr), url.isFileURL {
+            return url.path
+        }
+        if urlStr.hasPrefix("/") {
+            return urlStr
+        }
+    }
+    return nil
+}
+
 private func normalizeTabTitle(_ title: String) -> String {
     var t = title.trimmingCharacters(in: .whitespacesAndNewlines)
     if t.isEmpty { return t }
@@ -109,10 +133,14 @@ private func normalizeTabTitle(_ title: String) -> String {
     return t.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-/// Matches Rust `tab_session_key`: app|bundle|normalized_title
-private func tabSessionKey(name: String, bundleId: String, title: String?) -> String {
+/// Matches Rust `tab_session_key`: Finder uses folder path; others use normalized title.
+private func tabSessionKey(name: String, bundleId: String, title: String?, folderPath: String?) -> String {
     let app = name.lowercased()
     let bundle = bundleId.lowercased()
+    if bundle.contains("com.apple.finder"), let path = folderPath, !path.isEmpty {
+        let keyPath = path.hasSuffix("/") && path.count > 1 ? String(path.dropLast()) : path
+        return "\(app)|\(bundle)|\(keyPath)"
+    }
     let tab: String
     if let title = title {
         let normalized = normalizeTabTitle(title)
@@ -129,13 +157,14 @@ private func resolveTitle(pid: Int32) -> (String?, String) {
     return (nil, "none")
 }
 
-private func payload(from app: NSRunningApplication, event: String, title: String?, titleSource: String) -> FocusPayload {
+private func payload(from app: NSRunningApplication, event: String, title: String?, folderPath: String?, titleSource: String) -> FocusPayload {
     FocusPayload(
         event: event,
         name: app.localizedName ?? app.bundleIdentifier ?? "Unknown",
         bundle_id: app.bundleIdentifier ?? "",
         pid: app.processIdentifier,
         window_title: title,
+        folder_path: folderPath,
         title_source: titleSource,
         timestamp_ms: nowMs(),
         accessibility_trusted: axTrusted(),
@@ -152,7 +181,9 @@ private func emit(_ p: FocusPayload) {
 private func snapshotFromFrontmost(event: String) {
     guard let app = NSWorkspace.shared.frontmostApplication else { return }
     let (title, source) = resolveTitle(pid: app.processIdentifier)
-    emit(payload(from: app, event: event, title: title, titleSource: source))
+    let bundleId = app.bundleIdentifier ?? ""
+    let folderPath = axFolderPath(pid: app.processIdentifier, bundleId: bundleId)
+    emit(payload(from: app, event: event, title: title, folderPath: folderPath, titleSource: source))
 }
 
 private func runMonitor() {
@@ -164,11 +195,12 @@ private func runMonitor() {
         let pid = app.processIdentifier
         let name = app.localizedName ?? app.bundleIdentifier ?? "Unknown"
         let bundleId = app.bundleIdentifier ?? ""
-        let tabKey = tabSessionKey(name: name, bundleId: bundleId, title: title)
+        let folderPath = axFolderPath(pid: pid, bundleId: bundleId)
+        let tabKey = tabSessionKey(name: name, bundleId: bundleId, title: title, folderPath: folderPath)
         if event == "activation" || pid != lastPid || tabKey != lastTabKey {
             lastPid = pid
             lastTabKey = tabKey
-            emit(payload(from: app, event: event, title: title, titleSource: source))
+            emit(payload(from: app, event: event, title: title, folderPath: folderPath, titleSource: source))
         }
     }
 

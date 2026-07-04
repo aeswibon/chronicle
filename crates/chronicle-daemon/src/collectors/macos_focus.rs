@@ -12,6 +12,7 @@ pub struct FocusSample {
     pub bundle_id: String,
     pub pid: i32,
     pub window_title: Option<String>,
+    pub folder_path: Option<String>,
     pub title_source: String,
     pub timestamp_ms: i64,
     pub accessibility_trusted: bool,
