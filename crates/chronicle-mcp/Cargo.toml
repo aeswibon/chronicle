@@ -19,4 +19,4 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 schemars = "1.2"
-rmcp = { version = "0.16", features = ["server", "transport-io"] }
+rmcp = { version = "2.0", features = ["server", "transport-io"] }
